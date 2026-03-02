@@ -121,9 +121,12 @@ class ContentSafetyGuardPlugin(Star):
         self._violations: dict[str, int] = {}  # sender_id → 累计违规次数
         self._data_file: Path | None = None
         self._cleanup_task: asyncio.Task | None = None
+        try:
+            self._data_file = StarTools.get_data_dir() / "blacklist.json"
+        except Exception as e:
+            logger.warning(f"[ContentSafetyGuard] 初始化黑名单数据目录失败: {e}")
         if self.blacklist_enabled:
             try:
-                self._data_file = StarTools.get_data_dir() / "blacklist.json"
                 self._load_blacklist()
             except Exception as e:
                 logger.warning(f"[ContentSafetyGuard] 加载黑名单数据失败: {e}")
@@ -495,6 +498,22 @@ class ContentSafetyGuardPlugin(Star):
         except Exception as e:
             logger.error(f"[ContentSafetyGuard] 保存黑名单数据失败: {e}")
 
+    @staticmethod
+    def _format_expiry(expiry: float) -> str:
+        """格式化封禁到期时间。"""
+        if expiry == float("inf"):
+            return "永久"
+        remain = int(expiry - time.time())
+        if remain <= 0:
+            return "已过期"
+        mins, secs = divmod(remain, 60)
+        hours, mins = divmod(mins, 60)
+        if hours > 0:
+            return f"剩余 {hours}小时{mins}分钟"
+        if mins > 0:
+            return f"剩余 {mins}分钟{secs}秒"
+        return f"剩余 {secs}秒"
+
     def _is_blacklisted(self, sender_id: str) -> bool:
         """检查用户是否在黑名单中（同时清理过期条目）"""
         if not self.blacklist_enabled or not sender_id:
@@ -565,6 +584,102 @@ class ContentSafetyGuardPlugin(Star):
                 await self._cleanup_task
             except asyncio.CancelledError:
                 pass
+
+    # ══════════════════════════════════════════════════════════════
+    # 管理指令（管理员）
+    # ══════════════════════════════════════════════════════════════
+
+    @filter.command_group("csgbl")
+    def csgbl(self) -> None:
+        """内容安全黑名单管理"""
+
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @csgbl.command("add")
+    async def csgbl_add(
+        self, event: AstrMessageEvent, user_id: str = "", duration_minutes: int = -1
+    ) -> None:
+        """手动拉黑用户：/csgbl add <user_id> [分钟，0=永久]"""
+        user_id = user_id.strip()
+        if not user_id:
+            event.set_result(event.plain_result("用法：/csgbl add <user_id> [分钟，0=永久]"))
+            return
+
+        duration = self.blacklist_duration if duration_minutes < 0 else duration_minutes
+        expiry = time.time() + duration * 60 if duration > 0 else float("inf")
+        self._blacklist[user_id] = expiry
+        self._violations[user_id] = max(
+            self._violations.get(user_id, 0), self.blacklist_max_violations
+        )
+        self._save_blacklist()
+
+        enabled_tip = "" if self.blacklist_enabled else "（提示：当前 blacklist.enable=false，尚不会触发拦截）"
+        event.set_result(
+            event.plain_result(
+                f"✅ 已拉黑用户 {user_id}，{self._format_expiry(expiry)} {enabled_tip}".strip()
+            )
+        )
+
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @csgbl.command("del")
+    async def csgbl_del(self, event: AstrMessageEvent, user_id: str = "") -> None:
+        """手动解封用户：/csgbl del <user_id>"""
+        user_id = user_id.strip()
+        if not user_id:
+            event.set_result(event.plain_result("用法：/csgbl del <user_id>"))
+            return
+
+        existed = user_id in self._blacklist or user_id in self._violations
+        self._blacklist.pop(user_id, None)
+        self._violations.pop(user_id, None)
+        self._save_blacklist()
+
+        if existed:
+            event.set_result(event.plain_result(f"✅ 已解除用户 {user_id} 的黑名单/违规记录"))
+        else:
+            event.set_result(event.plain_result(f"ℹ️ 用户 {user_id} 不在黑名单中"))
+
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @csgbl.command("ls")
+    async def csgbl_ls(self, event: AstrMessageEvent) -> None:
+        """查看黑名单：/csgbl ls"""
+        if not self._blacklist:
+            event.set_result(event.plain_result("当前黑名单为空。"))
+            return
+
+        lines = [
+            "📋 ContentSafetyGuard 黑名单列表",
+            f"- 黑名单功能: {'启用' if self.blacklist_enabled else '未启用'}",
+            f"- 当前封禁人数: {len(self._blacklist)}",
+            "",
+        ]
+
+        now = time.time()
+        for uid, expiry in sorted(
+            self._blacklist.items(),
+            key=lambda item: item[1] if item[1] != float("inf") else now + 10**12,
+        ):
+            if expiry != float("inf") and expiry <= now:
+                continue
+            lines.append(
+                f"- {uid} | {self._format_expiry(expiry)} | 违规次数: {self._violations.get(uid, 0)}"
+            )
+
+        event.set_result(event.plain_result("\n".join(lines)))
+
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @csgbl.command("clear")
+    async def csgbl_clear(self, event: AstrMessageEvent) -> None:
+        """清空黑名单与违规记录：/csgbl clear"""
+        bl_count = len(self._blacklist)
+        vio_count = len(self._violations)
+        self._blacklist.clear()
+        self._violations.clear()
+        self._save_blacklist()
+        event.set_result(
+            event.plain_result(
+                f"✅ 已清空黑名单数据（封禁 {bl_count} 人，违规记录 {vio_count} 条）"
+            )
+        )
 
     # ══════════════════════════════════════════════════════════════
     # 事件钩子
