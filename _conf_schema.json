@@ -41,17 +41,17 @@
             },
             "app_id": {
                 "description": "百度 AIP 应用 App ID",
-                "type": "str",
+                "type": "string",
                 "default": ""
             },
             "api_key": {
                 "description": "百度 AIP 应用 API Key",
-                "type": "str",
+                "type": "string",
                 "default": ""
             },
             "secret_key": {
                 "description": "百度 AIP 应用 Secret Key",
-                "type": "str",
+                "type": "string",
                 "default": ""
             }
         }
@@ -67,39 +67,39 @@
             },
             "provider_id": {
                 "description": "审查使用的 Provider ID（留空则使用当前默认 Provider）",
-                "type": "str",
+                "type": "string",
                 "default": ""
             },
             "model": {
                 "description": "审查使用的模型名称（留空则使用 Provider 默认模型，建议用低成本模型如 gpt-4o-mini）",
-                "type": "str",
+                "type": "string",
                 "default": ""
             },
             "prompt": {
                 "description": "审查提示词模板（{text}=待审查文本，{keywords}=用户配置的关键词列表，可完全自定义，只需确保返回 {\"safe\": bool, \"reason\": str} 格式）",
-                "type": "str",
+                "type": "string",
                 "default": "请判断以下文本是否包含以下要素：{keywords}\n请严格仅返回如下 JSON 格式，不要包含任何额外文字：\n{\"safe\": true/false, \"reason\": \"简要说明原因\"}\n\n待审查文本：\n{text}"
             }
         }
     },
     "safety_prompt": {
         "description": "引导模型重新生成合规内容时的提示词模板（{reason} 会被替换为拦截原因）",
-        "type": "str",
+        "type": "string",
         "default": "你之前的回复未通过内容安全审核，被拦截了。\n拦截原因：{reason}\n\n请重新回复用户的消息，保持有用和完整，但务必确保内容合规、安全，不要包含任何敏感或不适当的内容。"
     },
     "block_message": {
         "description": "所有重试都失败后显示的安全兜底消息",
-        "type": "str",
+        "type": "string",
         "default": "抱歉，我无法回答这个问题。请换一个话题吧～"
     },
     "input_block_message": {
         "description": "用户输入不合规时的提示消息",
-        "type": "str",
+        "type": "string",
         "default": "你的消息包含不适当的内容，已被屏蔽。"
     },
     "prevention_prompt": {
         "description": "注入到 system_prompt 的安全约束提示词（{keywords} 会被替换为屏蔽词列表，从源头引导 LLM 不生成敏感内容）",
-        "type": "str",
+        "type": "string",
         "default": "【内容安全约束】你的回复不得包含以下要素：{keywords}。包含此类内容的回复将会被系统拦截。"
     },
     "blacklist": {
@@ -123,7 +123,7 @@
             },
             "message": {
                 "description": "黑名单用户发消息时的提示",
-                "type": "str",
+                "type": "string",
                 "default": "你已因多次发送违规内容被临时限制使用，请稍后再试。"
             }
         }
