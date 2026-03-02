@@ -19,6 +19,11 @@
         "type": "bool",
         "default": true
     },
+    "reply_placeholder_on_block": {
+        "description": "拦截后是否回复占位消息（关闭后改为静默拦截）",
+        "type": "bool",
+        "default": true
+    },
     "group_only": {
         "description": "是否默认仅在群聊中生效（开启后私聊不受本插件影响）",
         "type": "bool",
@@ -81,11 +86,25 @@
                 "default": false
             },
             "provider_id": {
-                "description": "审查使用的提供商（留空则使用当前默认 Provider）",
+                "description": "审查默认提供商（输入/输出未单独配置时使用）",
                 "type": "string",
                 "default": "",
                 "_special": "select_provider",
                 "hint": "与 Heartflow 一样通过下拉选择提供商，不需要手写 ID"
+            },
+            "input_provider_id": {
+                "description": "用户输入审查使用的提供商（留空则回退 llm_audit.provider_id）",
+                "type": "string",
+                "default": "",
+                "_special": "select_provider",
+                "hint": "可单独配置更快更便宜的小模型用于输入前置审查"
+            },
+            "output_provider_id": {
+                "description": "模型输出审查使用的提供商（留空则回退 llm_audit.provider_id）",
+                "type": "string",
+                "default": "",
+                "_special": "select_provider",
+                "hint": "可单独配置更稳妥的小模型用于输出审查"
             },
             "prompt": {
                 "description": "审查提示词模板（{text}=待审查文本，{keywords}=用户配置的关键词列表，可完全自定义，只需确保返回 {\"safe\": bool, \"reason\": str} 格式）",
