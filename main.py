@@ -174,6 +174,16 @@ class ContentSafetyGuardPlugin(Star):
             rendered = rendered.replace(f"{{{key}}}", value)
         return rendered
 
+    @staticmethod
+    def _clip_log_text(text: str, limit: int = 200) -> str:
+        """截断日志文本，避免单条日志过长。"""
+        if not text:
+            return ""
+        s = text.replace("\n", " ").strip()
+        if len(s) <= limit:
+            return s
+        return f"{s[:limit]}..."
+
     # ══════════════════════════════════════════════════════════════
     # 内容安全检查
     # ══════════════════════════════════════════════════════════════
@@ -255,7 +265,13 @@ class ContentSafetyGuardPlugin(Star):
             )
 
             result_text = (resp.completion_text or "").strip()
-            return self._parse_llm_audit_result(result_text)
+            is_safe, reason = self._parse_llm_audit_result(result_text)
+            audit_reason = reason or self._clip_log_text(result_text)
+            logger.info(
+                f"[ContentSafetyGuard] LLM审查结果: {'通过' if is_safe else '不通过'} | "
+                f"原因: {audit_reason or '无'}"
+            )
+            return is_safe, reason
 
         except Exception as e:
             logger.error(f"[ContentSafetyGuard] LLM审查调用失败: {e}")
@@ -384,7 +400,13 @@ class ContentSafetyGuardPlugin(Star):
             )
 
             result_text = (resp.completion_text or "").strip()
-            return self._parse_combined_audit_result(result_text)
+            target, reason = self._parse_combined_audit_result(result_text)
+            audit_reason = reason or self._clip_log_text(result_text)
+            logger.info(
+                f"[ContentSafetyGuard] LLM组合审查结果: {target} | "
+                f"原因: {audit_reason or '无'}"
+            )
+            return target, reason
 
         except Exception as e:
             logger.error(f"[ContentSafetyGuard] LLM组合审查调用失败: {e}")
