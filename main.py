@@ -44,6 +44,10 @@ class ContentSafetyGuardPlugin(Star):
         self.max_retries: int = self.config.get("max_retries", 2)
         self.check_input: bool = self.config.get("check_input", False)
         self.check_output: bool = self.config.get("check_output", True)
+        self.group_only: bool = self.config.get("group_only", True)
+        self.block_non_admin_slash_in_group: bool = self.config.get(
+            "block_non_admin_slash_in_group", True
+        )
 
         # ─── 关键词配置 ───
         keywords_cfg = self.config.get("keywords", {})
@@ -119,6 +123,9 @@ class ContentSafetyGuardPlugin(Star):
         # ─── 黑名单运行时状态（持久化到 data 目录）───
         self._blacklist: dict[str, float] = {}  # sender_id → 解封时间戳
         self._violations: dict[str, int] = {}  # sender_id → 累计违规次数
+        self._blacklist_notified: dict[
+            str, bool
+        ] = {}  # sender_id → 是否已提示过黑名单消息
         self._data_file: Path | None = None
         self._cleanup_task: asyncio.Task | None = None
         try:
@@ -137,6 +144,8 @@ class ContentSafetyGuardPlugin(Star):
             f"{(' [' + (self.llm_audit_provider or '默认') + ']') if self.llm_audit_enabled else ''} | "
             f"最大重试: {self.max_retries} | "
             f"检查输入: {self.check_input} | 检查输出: {self.check_output} | "
+            f"仅群聊: {self.group_only} | "
+            f"群聊拦截非管理员斜杠: {self.block_non_admin_slash_in_group} | "
             f"黑名单: {'启用' if self.blacklist_enabled else '禁用'}"
             f"{(f'({self.blacklist_max_violations}次违规/{self.blacklist_duration}分钟)') if self.blacklist_enabled else ''}"
         )
@@ -465,6 +474,7 @@ class ContentSafetyGuardPlugin(Star):
         """从磁盘加载黑名单数据"""
         self._blacklist = {}
         self._violations = {}
+        self._blacklist_notified = {}
         if not self._data_file or not self._data_file.exists():
             return
         try:
@@ -475,6 +485,10 @@ class ContentSafetyGuardPlugin(Star):
                 if expiry == float("inf") or expiry > now:
                     self._blacklist[uid] = expiry
             self._violations = data.get("violations", {})
+            raw_notified = data.get("blacklist_notified", {})
+            self._blacklist_notified = {
+                uid: bool(raw_notified.get(uid, False)) for uid in self._blacklist
+            }
             logger.info(
                 f"[ContentSafetyGuard] 已加载黑名单数据: "
                 f"{len(self._blacklist)} 个封禁, {len(self._violations)} 个违规记录"
@@ -490,6 +504,10 @@ class ContentSafetyGuardPlugin(Star):
             data = {
                 "blacklist": {uid: exp for uid, exp in self._blacklist.items()},
                 "violations": dict(self._violations),
+                "blacklist_notified": {
+                    uid: bool(self._blacklist_notified.get(uid, False))
+                    for uid in self._blacklist
+                },
             }
             self._data_file.write_text(
                 json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
@@ -532,9 +550,20 @@ class ContentSafetyGuardPlugin(Star):
         # 已过期，移除
         del self._blacklist[sender_id]
         self._violations.pop(sender_id, None)
+        self._blacklist_notified.pop(sender_id, None)
         self._save_blacklist()
         logger.info(f"[ContentSafetyGuard] 用户 {sender_id} 封禁已到期，已自动解封")
         return False
+
+    def _should_send_blacklist_notice(self, sender_id: str) -> bool:
+        """是否应该发送黑名单提示（仅首次）。"""
+        if sender_id not in self._blacklist:
+            return False
+        if self._blacklist_notified.get(sender_id, False):
+            return False
+        self._blacklist_notified[sender_id] = True
+        self._save_blacklist()
+        return True
 
     def _add_violation(self, sender_id: str, reason: str) -> bool:
         """记录违规并判断是否需要拉黑。返回 True 表示已被拉黑。"""
@@ -548,6 +577,7 @@ class ContentSafetyGuardPlugin(Star):
             else:
                 expiry = float("inf")
             self._blacklist[sender_id] = expiry
+            self._blacklist_notified[sender_id] = False
             duration_text = (
                 f"{self.blacklist_duration} 分钟"
                 if self.blacklist_duration > 0
@@ -578,6 +608,7 @@ class ContentSafetyGuardPlugin(Star):
             for uid in expired:
                 del self._blacklist[uid]
                 self._violations.pop(uid, None)
+                self._blacklist_notified.pop(uid, None)
                 logger.info(f"[ContentSafetyGuard] 用户 {uid} 封禁已到期，已自动解封")
             if expired:
                 self._save_blacklist()
@@ -599,6 +630,21 @@ class ContentSafetyGuardPlugin(Star):
     def csgbl(self) -> None:
         """内容安全黑名单管理"""
 
+    @filter.regex(r"^/")
+    async def block_group_slash_for_non_admin(self, event: AstrMessageEvent) -> None:
+        """群聊中非管理员发送 / 开头消息时静默拦截。"""
+        if not self.block_non_admin_slash_in_group:
+            return
+        if event.is_private_chat():
+            return
+        if event.is_admin():
+            return
+        logger.info(
+            f"[ContentSafetyGuard] 已拦截群聊非管理员斜杠消息: "
+            f"user={event.get_sender_id()} group={event.get_group_id()}"
+        )
+        event.stop_event()
+
     @filter.permission_type(filter.PermissionType.ADMIN)
     @csgbl.command("add")
     async def csgbl_add(
@@ -607,18 +653,25 @@ class ContentSafetyGuardPlugin(Star):
         """手动拉黑用户：/csgbl add <user_id> [分钟，0=永久]"""
         user_id = user_id.strip()
         if not user_id:
-            event.set_result(event.plain_result("用法：/csgbl add <user_id> [分钟，0=永久]"))
+            event.set_result(
+                event.plain_result("用法：/csgbl add <user_id> [分钟，0=永久]")
+            )
             return
 
         duration = self.blacklist_duration if duration_minutes < 0 else duration_minutes
         expiry = time.time() + duration * 60 if duration > 0 else float("inf")
         self._blacklist[user_id] = expiry
+        self._blacklist_notified[user_id] = False
         self._violations[user_id] = max(
             self._violations.get(user_id, 0), self.blacklist_max_violations
         )
         self._save_blacklist()
 
-        enabled_tip = "" if self.blacklist_enabled else "（提示：当前 blacklist.enable=false，尚不会触发拦截）"
+        enabled_tip = (
+            ""
+            if self.blacklist_enabled
+            else "（提示：当前 blacklist.enable=false，尚不会触发拦截）"
+        )
         event.set_result(
             event.plain_result(
                 "\n".join(
@@ -645,9 +698,14 @@ class ContentSafetyGuardPlugin(Star):
             event.set_result(event.plain_result("用法：/csgbl del <user_id>"))
             return
 
-        existed = user_id in self._blacklist or user_id in self._violations
+        existed = (
+            user_id in self._blacklist
+            or user_id in self._violations
+            or user_id in self._blacklist_notified
+        )
         self._blacklist.pop(user_id, None)
         self._violations.pop(user_id, None)
+        self._blacklist_notified.pop(user_id, None)
         self._save_blacklist()
 
         if existed:
@@ -702,12 +760,14 @@ class ContentSafetyGuardPlugin(Star):
         """清空黑名单与违规记录：/csgbl clear"""
         bl_count = len(self._blacklist)
         vio_count = len(self._violations)
+        notice_count = len(self._blacklist_notified)
         self._blacklist.clear()
         self._violations.clear()
+        self._blacklist_notified.clear()
         self._save_blacklist()
         event.set_result(
             event.plain_result(
-                f"✅ 已清空黑名单数据（封禁 {bl_count} 人，违规记录 {vio_count} 条）"
+                f"✅ 已清空黑名单数据（封禁 {bl_count} 人，违规记录 {vio_count} 条，提示标记 {notice_count} 条）"
             )
         )
 
@@ -720,10 +780,16 @@ class ContentSafetyGuardPlugin(Star):
         self, event: AstrMessageEvent, request: ProviderRequest
     ) -> None:
         """LLM 请求前钩子 — 黑名单拦截 + 保存上下文 + 注入安全约束到 system_prompt"""
+        # 默认仅作用于群聊，私聊放行
+        if self.group_only and event.is_private_chat():
+            return
+
         # ─── 黑名单检查（最高优先级）───
         sender_id = event.get_sender_id()
         if self._is_blacklisted(sender_id):
             logger.info(f"[ContentSafetyGuard] 黑名单用户 {sender_id} 请求已拦截")
+            if self._should_send_blacklist_notice(sender_id):
+                event.set_result(self.blacklist_message)
             event.stop_event()
             return
 
@@ -753,6 +819,10 @@ class ContentSafetyGuardPlugin(Star):
         3. LLM 组合审查（一次调用同时审查双方）→ 用户不通过拦截 / AI 不通过重试
         4. 重试时仅检查 AI 新回复（用户输入已通过）
         """
+        # 默认仅作用于群聊，私聊放行
+        if self.group_only and event.is_private_chat():
+            return
+
         if not (self.check_input or self.check_output):
             return
 
