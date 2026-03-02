@@ -882,7 +882,7 @@ class ContentSafetyGuardPlugin(Star):
         if self.group_only and event.is_private_chat():
             return
 
-        if not (self.check_input or self.check_output):
+        if not (self.check_output or self.block_duplicate_reply):
             return
 
         if response.is_chunk:
@@ -900,7 +900,6 @@ class ContentSafetyGuardPlugin(Star):
                 ai_fail_reason = reason
         if (
             self.block_duplicate_reply
-            and self.check_output
             and not ai_fail_reason
             and self._is_duplicate_reply(session_id, ai_text)
         ):
