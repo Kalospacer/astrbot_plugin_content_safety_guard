@@ -15,7 +15,7 @@
         "default": true
     },
     "keywords": {
-        "description": "关键词审核配置",
+        "description": "关键词审核配置（自动进行文本归一化：去除零宽字符、中文间空格、全角转半角等）",
         "type": "object",
         "properties": {
             "enable": {
@@ -56,6 +56,32 @@
                 "description": "百度 AIP 应用 Secret Key",
                 "type": "str",
                 "default": ""
+            }
+        }
+    },
+    "llm_audit": {
+        "description": "LLM 自审查配置 — 用 LLM 自身判断回复是否合规（可选，会增加延迟和 API 调用量）",
+        "type": "object",
+        "properties": {
+            "enable": {
+                "description": "是否启用 LLM 自审查（默认关闭）",
+                "type": "bool",
+                "default": false
+            },
+            "provider_id": {
+                "description": "审查使用的 Provider ID（留空则使用当前默认 Provider）",
+                "type": "str",
+                "default": ""
+            },
+            "model": {
+                "description": "审查使用的模型名称（留空则使用 Provider 默认模型，建议用低成本模型如 gpt-4o-mini）",
+                "type": "str",
+                "default": ""
+            },
+            "prompt": {
+                "description": "审查提示词模板（{text} 会被替换为待审查文本）",
+                "type": "str",
+                "default": "你是一名内容安全审查员。请判断以下文本是否包含不适当内容（包括但不限于：暴力、色情、违法犯罪、歧视、自残自杀引导等）。\n请严格仅返回如下 JSON 格式，不要包含任何额外文字：\n{\"safe\": true/false, \"reason\": \"简要说明原因\"}\n\n待审查文本：\n```\n{text}\n```"
             }
         }
     },
