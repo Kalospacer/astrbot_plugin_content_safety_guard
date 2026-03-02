@@ -66,14 +66,11 @@
                 "default": false
             },
             "provider_id": {
-                "description": "审查使用的 Provider ID（留空则使用当前默认 Provider）",
+                "description": "审查使用的提供商（留空则使用当前默认 Provider）",
                 "type": "string",
-                "default": ""
-            },
-            "model": {
-                "description": "审查使用的模型名称（留空则使用 Provider 默认模型，建议用低成本模型如 gpt-4o-mini）",
-                "type": "string",
-                "default": ""
+                "default": "",
+                "_special": "select_provider",
+                "hint": "与 Heartflow 一样通过下拉选择提供商，不需要手写 ID"
             },
             "prompt": {
                 "description": "审查提示词模板（{text}=待审查文本，{keywords}=用户配置的关键词列表，可完全自定义，只需确保返回 {\"safe\": bool, \"reason\": str} 格式）",

@@ -83,8 +83,7 @@
 | 配置项 | 默认值 | 说明 |
 |--------|--------|------|
 | `llm_audit.enable` | `false` | 是否启用 LLM 自审查 |
-| `llm_audit.provider_id` | `""` | 审查使用的 Provider ID（留空用默认） |
-| `llm_audit.model` | `""` | 审查使用的模型名称（留空用 Provider 默认） |
+| `llm_audit.provider_id` | `""` | 审查使用的提供商（WebUI 下拉选择，留空用默认） |
 | `llm_audit.prompt` | *(见下方)* | 审查提示词模板 |
 
 ### 提示词配置

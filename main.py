@@ -16,7 +16,7 @@ from astrbot.api import logger
     name="astrbot_plugin_content_safety_guard",
     author="Kalo",
     desc="内容安全守卫 - 拦截不合规的LLM回复，引导模型重新生成合规内容，替代内置内容安全模块",
-    version="1.2.0",
+    version="1.2.2",
     repo="https://github.com/Kalospacer/astrbot_plugin_content_safety_guard",
 )
 class ContentSafetyGuardPlugin(Star):
@@ -73,7 +73,6 @@ class ContentSafetyGuardPlugin(Star):
         llm_audit_cfg = self.config.get("llm_audit", {})
         self.llm_audit_enabled: bool = llm_audit_cfg.get("enable", False)
         self.llm_audit_provider: str = llm_audit_cfg.get("provider_id", "")
-        self.llm_audit_model: str = llm_audit_cfg.get("model", "")
         self.llm_audit_prompt: str = llm_audit_cfg.get(
             "prompt",
             (
@@ -131,7 +130,7 @@ class ContentSafetyGuardPlugin(Star):
             self._cleanup_task = asyncio.create_task(self._cleanup_expired_bans())
 
         logger.info(
-            f"[ContentSafetyGuard] 已加载 v1.1.0 | "
+            f"[ContentSafetyGuard] 已加载 v1.2.2 | "
             f"关键词: {'启用' if self.keywords_enabled else '禁用'}({len(self.keywords_list)}个) | "
             f"百度AIP: {'启用' if self.baidu_enabled else '禁用'} | "
             f"LLM审查: {'启用' if self.llm_audit_enabled else '禁用'}"
@@ -238,16 +237,10 @@ class ContentSafetyGuardPlugin(Star):
                 else "无指定",
             )
 
-            # 可选指定模型
-            kwargs: dict[str, Any] = {}
-            if self.llm_audit_model:
-                kwargs["model"] = self.llm_audit_model
-
             resp = await self.context.llm_generate(
                 chat_provider_id=provider_id,
                 prompt=audit_prompt,
                 system_prompt="你是内容安全审查员。只返回 JSON，不要附加任何解释。",
-                **kwargs,
             )
 
             result_text = (resp.completion_text or "").strip()
@@ -373,15 +366,10 @@ class ContentSafetyGuardPlugin(Star):
                 f"【AI回复】：\n{ai_text}"
             )
 
-            kwargs: dict[str, Any] = {}
-            if self.llm_audit_model:
-                kwargs["model"] = self.llm_audit_model
-
             resp = await self.context.llm_generate(
                 chat_provider_id=provider_id,
                 prompt=prompt,
                 system_prompt="你是内容安全审查员。只返回 JSON，不要附加任何解释。",
-                **kwargs,
             )
 
             result_text = (resp.completion_text or "").strip()
