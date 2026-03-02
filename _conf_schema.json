@@ -5,7 +5,7 @@
         "default": 2
     },
     "check_input": {
-        "description": "是否检查用户输入的内容安全（与 LLM 回复在同一钩子中同时审查，不通过则直接拦截）",
+        "description": "是否在 LLM 请求前检查用户输入（不通过则直接拦截，不会调用模型）",
         "type": "bool",
         "default": false
     },
@@ -77,7 +77,7 @@
         }
     },
     "llm_audit": {
-        "description": "LLM 自审查配置 — 用 LLM 自身判断回复是否合规（可选，会增加延迟和 API 调用量）",
+        "description": "LLM 自审查配置 — 可分别为用户输入前置审查与模型输出审查指定不同提供商（会增加延迟和 API 调用量）",
         "type": "object",
         "items": {
             "enable": {
@@ -90,7 +90,7 @@
                 "type": "string",
                 "default": "",
                 "_special": "select_provider",
-                "hint": "与 Heartflow 一样通过下拉选择提供商，不需要手写 ID"
+                "hint": "通过下拉选择提供商，不需要手写 ID"
             },
             "input_provider_id": {
                 "description": "用户输入审查使用的提供商（留空则回退 llm_audit.provider_id）",
@@ -124,14 +124,14 @@
         "default": "抱歉，我无法回答这个问题。请换一个话题吧～"
     },
     "input_block_message": {
-        "description": "用户输入不合规时的提示消息",
+        "description": "用户输入不合规时的提示消息（仅在 reply_placeholder_on_block=true 时生效）",
         "type": "string",
         "default": "你的消息包含不适当的内容，已被屏蔽。"
     },
     "prevention_prompt": {
         "description": "注入到 system_prompt 的安全约束提示词（{keywords} 会被替换为屏蔽词列表，从源头引导 LLM 不生成敏感内容）",
         "type": "string",
-        "default": "【内容安全约束】你的回复不得包含以下要素：{keywords}。包含此类内容的回复将会被系统拦截。"
+        "default": "**内容安全约束**你的回复不得包含以下要素：{keywords}。包含此类内容的回复将会被系统拦截。"
     },
     "blacklist": {
         "description": "用户黑名单配置 — 对多次发送违规内容的用户自动限制使用（需开启 check_input）",
@@ -153,7 +153,7 @@
                 "default": 3
             },
             "message": {
-                "description": "黑名单用户发消息时的提示",
+                "description": "黑名单提示消息（仅在 reply_placeholder_on_block=true 且封禁后的首次拦截时发送）",
                 "type": "string",
                 "default": "你已因多次发送违规内容被临时限制使用，请稍后再试。"
             }
