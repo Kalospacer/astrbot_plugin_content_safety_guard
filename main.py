@@ -123,13 +123,10 @@ class ContentSafetyGuardPlugin(Star):
         self._cleanup_task: asyncio.Task | None = None
         try:
             self._data_file = StarTools.get_data_dir() / "blacklist.json"
+            self._load_blacklist()
         except Exception as e:
             logger.warning(f"[ContentSafetyGuard] 初始化黑名单数据目录失败: {e}")
         if self.blacklist_enabled:
-            try:
-                self._load_blacklist()
-            except Exception as e:
-                logger.warning(f"[ContentSafetyGuard] 加载黑名单数据失败: {e}")
             self._cleanup_task = asyncio.create_task(self._cleanup_expired_bans())
 
         logger.info(
@@ -466,6 +463,8 @@ class ContentSafetyGuardPlugin(Star):
 
     def _load_blacklist(self) -> None:
         """从磁盘加载黑名单数据"""
+        self._blacklist = {}
+        self._violations = {}
         if not self._data_file or not self._data_file.exists():
             return
         try:
@@ -513,6 +512,13 @@ class ContentSafetyGuardPlugin(Star):
         if mins > 0:
             return f"剩余 {mins}分钟{secs}秒"
         return f"剩余 {secs}秒"
+
+    @staticmethod
+    def _format_expiry_at(expiry: float) -> str:
+        """格式化封禁到期绝对时间。"""
+        if expiry == float("inf"):
+            return "永久"
+        return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(expiry))
 
     def _is_blacklisted(self, sender_id: str) -> bool:
         """检查用户是否在黑名单中（同时清理过期条目）"""
@@ -615,7 +621,18 @@ class ContentSafetyGuardPlugin(Star):
         enabled_tip = "" if self.blacklist_enabled else "（提示：当前 blacklist.enable=false，尚不会触发拦截）"
         event.set_result(
             event.plain_result(
-                f"✅ 已拉黑用户 {user_id}，{self._format_expiry(expiry)} {enabled_tip}".strip()
+                "\n".join(
+                    [
+                        "✅ 拉黑成功",
+                        f"- 用户ID: {user_id}",
+                        f"- 封禁时长: {'永久' if expiry == float('inf') else f'{duration} 分钟'}",
+                        f"- 到期时间: {self._format_expiry_at(expiry)}",
+                        f"- 剩余时长: {self._format_expiry(expiry)}",
+                        f"- 违规次数: {self._violations.get(user_id, 0)}",
+                        f"- 生效状态: {'已生效' if self.blacklist_enabled else '未生效（需开启 blacklist.enable）'}",
+                        enabled_tip,
+                    ]
+                ).strip()
             )
         )
 
@@ -634,7 +651,17 @@ class ContentSafetyGuardPlugin(Star):
         self._save_blacklist()
 
         if existed:
-            event.set_result(event.plain_result(f"✅ 已解除用户 {user_id} 的黑名单/违规记录"))
+            event.set_result(
+                event.plain_result(
+                    "\n".join(
+                        [
+                            "✅ 解除成功",
+                            f"- 用户ID: {user_id}",
+                            "- 状态: 已从黑名单和违规记录中移除",
+                        ]
+                    )
+                )
+            )
         else:
             event.set_result(event.plain_result(f"ℹ️ 用户 {user_id} 不在黑名单中"))
 
@@ -642,9 +669,7 @@ class ContentSafetyGuardPlugin(Star):
     @csgbl.command("ls")
     async def csgbl_ls(self, event: AstrMessageEvent) -> None:
         """查看黑名单：/csgbl ls"""
-        if not self._blacklist:
-            event.set_result(event.plain_result("当前黑名单为空。"))
-            return
+        self._load_blacklist()
 
         lines = [
             "📋 ContentSafetyGuard 黑名单列表",
@@ -654,15 +679,20 @@ class ContentSafetyGuardPlugin(Star):
         ]
 
         now = time.time()
+        active_count = 0
         for uid, expiry in sorted(
             self._blacklist.items(),
             key=lambda item: item[1] if item[1] != float("inf") else now + 10**12,
         ):
             if expiry != float("inf") and expiry <= now:
                 continue
+            active_count += 1
             lines.append(
-                f"- {uid} | {self._format_expiry(expiry)} | 违规次数: {self._violations.get(uid, 0)}"
+                f"- 用户ID: {uid} | 剩余: {self._format_expiry(expiry)} | 到期: {self._format_expiry_at(expiry)} | 违规次数: {self._violations.get(uid, 0)}"
             )
+
+        if active_count == 0:
+            lines.append("- 当前无有效封禁用户")
 
         event.set_result(event.plain_result("\n".join(lines)))
 
