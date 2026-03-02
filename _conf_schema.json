@@ -5,7 +5,7 @@
         "default": 2
     },
     "check_input": {
-        "description": "是否检查用户输入的内容安全（不通过则直接屏蔽）",
+        "description": "是否检查用户输入的内容安全（与 LLM 回复在同一钩子中同时审查，不通过则直接拦截）",
         "type": "bool",
         "default": false
     },
@@ -79,9 +79,9 @@
                 "default": ""
             },
             "prompt": {
-                "description": "审查提示词模板（{text} 会被替换为待审查文本）",
+                "description": "审查提示词模板（{text}=待审查文本，{keywords}=用户配置的关键词列表，可完全自定义，只需确保返回 {\"safe\": bool, \"reason\": str} 格式）",
                 "type": "str",
-                "default": "你是一名内容安全审查员。请判断以下文本是否包含不适当内容（包括但不限于：暴力、色情、违法犯罪、歧视、自残自杀引导等）。\n请严格仅返回如下 JSON 格式，不要包含任何额外文字：\n{\"safe\": true/false, \"reason\": \"简要说明原因\"}\n\n待审查文本：\n```\n{text}\n```"
+                "default": "请判断以下文本是否包含以下要素：{keywords}\n请严格仅返回如下 JSON 格式，不要包含任何额外文字：\n{\"safe\": true/false, \"reason\": \"简要说明原因\"}\n\n待审查文本：\n{text}"
             }
         }
     },
@@ -99,5 +99,36 @@
         "description": "用户输入不合规时的提示消息",
         "type": "str",
         "default": "你的消息包含不适当的内容，已被屏蔽。"
+    },
+    "prevention_prompt": {
+        "description": "注入到 system_prompt 的安全约束提示词（{keywords} 会被替换为屏蔽词列表，从源头引导 LLM 不生成敏感内容）",
+        "type": "str",
+        "default": "【内容安全约束】你的回复不得包含以下要素：{keywords}。包含此类内容的回复将会被系统拦截。"
+    },
+    "blacklist": {
+        "description": "用户黑名单配置 — 对多次发送违规内容的用户自动限制使用（需开启 check_input）",
+        "type": "object",
+        "properties": {
+            "enable": {
+                "description": "是否启用自动拉黑（用户输入多次不通过安全检查后自动封禁）",
+                "type": "bool",
+                "default": false
+            },
+            "duration": {
+                "description": "自动封禁时长（分钟），0 表示永久封禁",
+                "type": "int",
+                "default": 60
+            },
+            "max_violations": {
+                "description": "触发自动拉黑所需的累计违规次数",
+                "type": "int",
+                "default": 3
+            },
+            "message": {
+                "description": "黑名单用户发消息时的提示",
+                "type": "str",
+                "default": "你已因多次发送违规内容被临时限制使用，请稍后再试。"
+            }
+        }
     }
 }

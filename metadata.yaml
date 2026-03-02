@@ -2,5 +2,5 @@
 desc: 内容安全守卫 - 拦截不合规的LLM回复，引导模型重新生成合规内容
 author: Kalo
 repo: https://github.com/Kalospacer/astrbot_plugin_content_safety_guard
-version: 1.1.0
+version: 1.2.0
 min_astrbot_version: 4.5.7
