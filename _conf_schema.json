@@ -15,9 +15,9 @@
         "default": true
     },
     "keywords": {
-        "description": "关键词审核配置（自动进行文本归一化：去除零宽字符、中文间空格、全角转半角等）",
+        "description": "关键词审核配置（自动进行文本归一化：去除零宽字符、中文间空格等）",
         "type": "object",
-        "properties": {
+        "items": {
             "enable": {
                 "description": "是否启用关键词检查（支持正则表达式）",
                 "type": "bool",
@@ -26,17 +26,14 @@
             "extra_keywords": {
                 "description": "自定义敏感词列表（每项可以是正则表达式）",
                 "type": "list",
-                "default": [],
-                "items": {
-                    "type": "str"
-                }
+                "default": []
             }
         }
     },
     "baidu_aip": {
         "description": "百度智能云内容审核配置（需要 pip install baidu-aip）",
         "type": "object",
-        "properties": {
+        "items": {
             "enable": {
                 "description": "是否启用百度内容审核",
                 "type": "bool",
@@ -62,7 +59,7 @@
     "llm_audit": {
         "description": "LLM 自审查配置 — 用 LLM 自身判断回复是否合规（可选，会增加延迟和 API 调用量）",
         "type": "object",
-        "properties": {
+        "items": {
             "enable": {
                 "description": "是否启用 LLM 自审查（默认关闭）",
                 "type": "bool",
@@ -108,7 +105,7 @@
     "blacklist": {
         "description": "用户黑名单配置 — 对多次发送违规内容的用户自动限制使用（需开启 check_input）",
         "type": "object",
-        "properties": {
+        "items": {
             "enable": {
                 "description": "是否启用自动拉黑（用户输入多次不通过安全检查后自动封禁）",
                 "type": "bool",
