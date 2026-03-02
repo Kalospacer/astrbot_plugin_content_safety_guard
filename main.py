@@ -579,7 +579,6 @@ class ContentSafetyGuardPlugin(Star):
         sender_id = event.get_sender_id()
         if self._is_blacklisted(sender_id):
             logger.info(f"[ContentSafetyGuard] 黑名单用户 {sender_id} 请求已拦截")
-            event.set_result(self.blacklist_message)
             event.stop_event()
             return
 
