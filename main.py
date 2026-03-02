@@ -166,6 +166,14 @@ class ContentSafetyGuardPlugin(Star):
         s = s.lower()
         return s
 
+    @staticmethod
+    def _render_template(template: str, values: dict[str, str]) -> str:
+        """安全模板渲染：仅替换已知占位符，避免 JSON 花括号触发 format 异常。"""
+        rendered = template or ""
+        for key, value in values.items():
+            rendered = rendered.replace(f"{{{key}}}", value)
+        return rendered
+
     # ══════════════════════════════════════════════════════════════
     # 内容安全检查
     # ══════════════════════════════════════════════════════════════
@@ -230,11 +238,14 @@ class ContentSafetyGuardPlugin(Star):
                     return True, ""
                 provider_id = prov.meta().id
 
-            audit_prompt = self.llm_audit_prompt.format(
-                text=text,
-                keywords="、".join(self.keywords_list)
-                if self.keywords_list
-                else "无指定",
+            audit_prompt = self._render_template(
+                self.llm_audit_prompt,
+                {
+                    "text": text,
+                    "keywords": "、".join(self.keywords_list)
+                    if self.keywords_list
+                    else "无指定",
+                },
             )
 
             resp = await self.context.llm_generate(
@@ -555,8 +566,9 @@ class ContentSafetyGuardPlugin(Star):
 
         # 注入屏蔽词约束到 system_prompt，从源头引导 LLM 规避敏感内容
         if self.keywords_list:
-            prevention = self.prevention_prompt.format(
-                keywords="、".join(self.keywords_list)
+            prevention = self._render_template(
+                self.prevention_prompt,
+                {"keywords": "、".join(self.keywords_list)},
             )
             if request.system_prompt:
                 request.system_prompt = f"{request.system_prompt}\n\n{prevention}"
@@ -664,7 +676,10 @@ class ContentSafetyGuardPlugin(Star):
                 f"[ContentSafetyGuard] 第 {attempt}/{self.max_retries} 次重新生成"
             )
 
-            safety_guidance = self.safety_prompt_template.format(reason=reason)
+            safety_guidance = self._render_template(
+                self.safety_prompt_template,
+                {"reason": reason},
+            )
             retry_prompt = f"{original_message}\n\n[系统安全提示] {safety_guidance}"
 
             try:
