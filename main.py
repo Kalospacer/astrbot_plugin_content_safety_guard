@@ -44,6 +44,9 @@ class ContentSafetyGuardPlugin(Star):
         self.max_retries: int = self.config.get("max_retries", 2)
         self.check_input: bool = self.config.get("check_input", False)
         self.check_output: bool = self.config.get("check_output", True)
+        self.block_duplicate_reply: bool = self.config.get(
+            "block_duplicate_reply", True
+        )
         self.group_only: bool = self.config.get("group_only", True)
         self.block_non_admin_slash_in_group: bool = self.config.get(
             "block_non_admin_slash_in_group", True
@@ -126,6 +129,7 @@ class ContentSafetyGuardPlugin(Star):
         self._blacklist_notified: dict[
             str, bool
         ] = {}  # sender_id → 是否已提示过黑名单消息
+        self._last_model_reply: dict[str, str] = {}  # session_id → 上一条已发送模型回复
         self._data_file: Path | None = None
         self._cleanup_task: asyncio.Task | None = None
         try:
@@ -144,6 +148,7 @@ class ContentSafetyGuardPlugin(Star):
             f"{(' [' + (self.llm_audit_provider or '默认') + ']') if self.llm_audit_enabled else ''} | "
             f"最大重试: {self.max_retries} | "
             f"检查输入: {self.check_input} | 检查输出: {self.check_output} | "
+            f"拦截重复回复: {self.block_duplicate_reply} | "
             f"仅群聊: {self.group_only} | "
             f"群聊拦截非管理员斜杠: {self.block_non_admin_slash_in_group} | "
             f"黑名单: {'启用' if self.blacklist_enabled else '禁用'}"
@@ -565,6 +570,29 @@ class ContentSafetyGuardPlugin(Star):
         self._save_blacklist()
         return True
 
+    @staticmethod
+    def _normalize_reply_for_compare(text: str) -> str:
+        """用于重复回复判定的标准化（仅去首尾空白）。"""
+        return (text or "").strip()
+
+    def _is_duplicate_reply(self, session_id: str, text: str) -> bool:
+        """判断是否与同会话上一条模型回复完全一致。"""
+        if not session_id:
+            return False
+        current = self._normalize_reply_for_compare(text)
+        if not current:
+            return False
+        return self._last_model_reply.get(session_id, "") == current
+
+    def _remember_reply(self, session_id: str, text: str) -> None:
+        """记录同会话最近一次已发送模型回复。"""
+        if not session_id:
+            return
+        normalized = self._normalize_reply_for_compare(text)
+        if not normalized:
+            return
+        self._last_model_reply[session_id] = normalized
+
     def _add_violation(self, sender_id: str, reason: str) -> bool:
         """记录违规并判断是否需要拉黑。返回 True 表示已被拉黑。"""
         if not self.blacklist_enabled or not sender_id:
@@ -832,6 +860,7 @@ class ContentSafetyGuardPlugin(Star):
         ai_text = response.completion_text
         if not ai_text or not ai_text.strip():
             return
+        session_id = event.get_session_id() or event.unified_msg_origin
 
         user_text = event.get_extra("_csg_user_text", "") if self.check_input else ""
 
@@ -850,6 +879,14 @@ class ContentSafetyGuardPlugin(Star):
             is_safe, reason = self._check_fast(ai_text)
             if not is_safe:
                 ai_fail_reason = reason
+        if (
+            self.block_duplicate_reply
+            and self.check_output
+            and not ai_fail_reason
+            and self._is_duplicate_reply(session_id, ai_text)
+        ):
+            ai_fail_reason = "与上一条模型回复完全重复"
+            logger.info(f"[ContentSafetyGuard] 命中重复回复拦截: session={session_id}")
 
         # ─── LLM 审查（一次调用同时审查用户输入 + AI 回复）───
         if not ai_fail_reason and self.llm_audit_enabled:
@@ -883,6 +920,7 @@ class ContentSafetyGuardPlugin(Star):
 
         # 全部通过
         if not ai_fail_reason:
+            self._remember_reply(session_id, ai_text)
             return
 
         logger.info(f"[ContentSafetyGuard] LLM回复未通过安全检查: {ai_fail_reason}")
@@ -932,12 +970,22 @@ class ContentSafetyGuardPlugin(Star):
                     )
                     continue
 
+                if self.block_duplicate_reply and self._is_duplicate_reply(
+                    session_id, new_text
+                ):
+                    reason = "与上一条模型回复完全重复"
+                    logger.info(
+                        f"[ContentSafetyGuard] 第 {attempt} 次重试命中重复回复拦截: session={session_id}"
+                    )
+                    continue
+
                 new_is_safe, new_reason = await self.check_content_safety(new_text)
                 if new_is_safe:
                     logger.info(
                         f"[ContentSafetyGuard] 第 {attempt} 次重试通过安全检查 ✓"
                     )
                     response.completion_text = new_text
+                    self._remember_reply(session_id, new_text)
                     return
                 else:
                     logger.info(

@@ -14,6 +14,11 @@
         "type": "bool",
         "default": true
     },
+    "block_duplicate_reply": {
+        "description": "是否拦截与上一条模型回复完全一致的内容（命中后要求重新生成）",
+        "type": "bool",
+        "default": true
+    },
     "group_only": {
         "description": "是否默认仅在群聊中生效（开启后私聊不受本插件影响）",
         "type": "bool",
