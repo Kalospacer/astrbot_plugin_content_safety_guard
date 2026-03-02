@@ -1,0 +1,77 @@
+# Content Safety Guard（内容安全守卫）
+
+> AstrBot 插件 - 智能内容安全审核与合规回复重生成
+
+## 功能
+
+替代 AstrBot 内置的内容安全模块。当 LLM 回复触发内容安全规则时，**不直接屏蔽**，而是：
+
+1. **拦截**不合规的 LLM 回复
+2. 将拦截原因**注入提示词**，引导模型重新生成合规回复
+3. 对新回复再次审核，最多重试 N 次
+4. 重试成功后**接回原工作流**正常发送；全部失败则显示安全兜底消息
+
+### 与内置模块的区别
+
+| 特性 | 内置模块 | 本插件 |
+|------|---------|--------|
+| 不合规时的行为 | 直接屏蔽，提示"已被屏蔽" | 引导模型重新生成合规回复 |
+| 用户体验 | 对话中断 | 对话自然继续 |
+| 重试机制 | 无 | 支持多次重试 |
+| 安全引导 | 无 | 将拦截原因注入提示词 |
+
+## 审核策略
+
+支持两种审核策略（与内置模块一致）：
+
+- **关键词匹配**：支持正则表达式的自定义敏感词列表
+- **百度智能云内容审核**：调用百度 AIP `textCensorUserDefined` 接口（需安装 `baidu-aip`）
+
+## 配置
+
+在 AstrBot 插件管理页面配置：
+
+| 配置项 | 默认值 | 说明 |
+|--------|--------|------|
+| `max_retries` | `2` | 回复不合规时的最大重试次数 |
+| `check_input` | `false` | 是否检查用户输入（不通过直接屏蔽） |
+| `check_output` | `true` | 是否检查 LLM 回复（不通过则重试） |
+| `keywords.enable` | `true` | 是否启用关键词检查 |
+| `keywords.extra_keywords` | `[]` | 自定义敏感词（支持正则） |
+| `baidu_aip.enable` | `false` | 是否启用百度内容审核 |
+| `baidu_aip.app_id` | `""` | 百度 AIP App ID |
+| `baidu_aip.api_key` | `""` | 百度 AIP API Key |
+| `baidu_aip.secret_key` | `""` | 百度 AIP Secret Key |
+| `safety_prompt` | *(见下方)* | 引导重生成的提示词模板 |
+| `block_message` | `"抱歉，..."` | 全部重试失败后的兜底消息 |
+| `input_block_message` | `"你的消息..."` | 用户输入不合规时的提示 |
+
+### 默认安全引导提示词
+
+```
+你之前的回复未通过内容安全审核，被拦截了。
+拦截原因：{reason}
+
+请重新回复用户的消息，保持有用和完整，但务必确保内容合规、安全，不要包含任何敏感或不适当的内容。
+```
+
+其中 `{reason}` 会被替换为实际的拦截原因。
+
+## 使用建议
+
+1. **关闭内置内容安全模块的输出检查**：在 AstrBot 设置中将 `content_safety.also_use_in_response` 设为 `false`，避免与本插件冲突
+2. **合理设置重试次数**：默认 2 次通常足够，过多会增加延迟和 API 调用成本
+3. **关键词列表支持正则**：可以用正则表达式实现更灵活的匹配，如 `色情|暴力|赌博`
+
+## 安装
+
+通过 AstrBot 插件市场安装，或手动 clone 到插件目录：
+
+```bash
+cd /path/to/astrbot/data/stars
+git clone https://github.com/Kalospacer/astrbot_plugin_content_safety_guard.git
+```
+
+## 许可证
+
+MIT License

@@ -1,0 +1,77 @@
+{
+    "max_retries": {
+        "description": "LLM 回复不合规时的最大重试次数",
+        "type": "int",
+        "default": 2
+    },
+    "check_input": {
+        "description": "是否检查用户输入的内容安全（不通过则直接屏蔽）",
+        "type": "bool",
+        "default": false
+    },
+    "check_output": {
+        "description": "是否检查 LLM 回复的内容安全（不通过则引导重新生成）",
+        "type": "bool",
+        "default": true
+    },
+    "keywords": {
+        "description": "关键词审核配置",
+        "type": "object",
+        "properties": {
+            "enable": {
+                "description": "是否启用关键词检查（支持正则表达式）",
+                "type": "bool",
+                "default": true
+            },
+            "extra_keywords": {
+                "description": "自定义敏感词列表（每项可以是正则表达式）",
+                "type": "list",
+                "default": [],
+                "items": {
+                    "type": "str"
+                }
+            }
+        }
+    },
+    "baidu_aip": {
+        "description": "百度智能云内容审核配置（需要 pip install baidu-aip）",
+        "type": "object",
+        "properties": {
+            "enable": {
+                "description": "是否启用百度内容审核",
+                "type": "bool",
+                "default": false
+            },
+            "app_id": {
+                "description": "百度 AIP 应用 App ID",
+                "type": "str",
+                "default": ""
+            },
+            "api_key": {
+                "description": "百度 AIP 应用 API Key",
+                "type": "str",
+                "default": ""
+            },
+            "secret_key": {
+                "description": "百度 AIP 应用 Secret Key",
+                "type": "str",
+                "default": ""
+            }
+        }
+    },
+    "safety_prompt": {
+        "description": "引导模型重新生成合规内容时的提示词模板（{reason} 会被替换为拦截原因）",
+        "type": "str",
+        "default": "你之前的回复未通过内容安全审核，被拦截了。\n拦截原因：{reason}\n\n请重新回复用户的消息，保持有用和完整，但务必确保内容合规、安全，不要包含任何敏感或不适当的内容。"
+    },
+    "block_message": {
+        "description": "所有重试都失败后显示的安全兜底消息",
+        "type": "str",
+        "default": "抱歉，我无法回答这个问题。请换一个话题吧～"
+    },
+    "input_block_message": {
+        "description": "用户输入不合规时的提示消息",
+        "type": "str",
+        "default": "你的消息包含不适当的内容，已被屏蔽。"
+    }
+}
