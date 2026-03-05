@@ -670,12 +670,17 @@ class ContentSafetyGuardPlugin(Star):
     def csgbl(self) -> None:
         """内容安全黑名单管理"""
 
-    @filter.regex(r"^/")
+    @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE, priority=10000)
     async def block_group_slash_for_non_admin(self, event: AstrMessageEvent) -> None:
         """群聊中非管理员发送 / 开头消息时静默拦截。"""
         if not self.block_non_admin_slash_in_group:
             return
         if event.is_private_chat():
+            return
+        message = (event.get_message_str() or "").lstrip()
+        if not message.startswith("/"):
+            return
+        if event.get_sender_id() == event.get_self_id():
             return
         if event.is_admin():
             return

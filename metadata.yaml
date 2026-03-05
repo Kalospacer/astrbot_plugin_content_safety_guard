@@ -3,5 +3,5 @@ display_name: "阿瓦隆Avalon"
 desc: "内容安全守卫 - 拦截不合规的LLM回复，引导模型重新生成合规内容"
 author: Kalospacer
 repo: "https://github.com/Kalospacer/astrbot_plugin_content_safety_guard.git"
-version: 1.2.2
+version: 1.2.3
 astrbot_version: ">=4.18.0"
