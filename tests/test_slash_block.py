@@ -169,6 +169,28 @@ class SlashBlockTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(event.stopped)
 
+    async def test_block_group_slash_after_leading_mention(self) -> None:
+        plugin = make_plugin()
+        event = DummyEvent(
+            raw_message="[At:bot-1] /new",
+            trimmed_message="/new",
+        )
+
+        await plugin.block_group_slash_for_non_admin(event)
+
+        self.assertTrue(event.stopped)
+
+    async def test_does_not_block_mid_sentence_slash(self) -> None:
+        plugin = make_plugin()
+        event = DummyEvent(
+            raw_message="hello /new",
+            trimmed_message="hello /new",
+        )
+
+        await plugin.block_group_slash_for_non_admin(event)
+
+        self.assertFalse(event.stopped)
+
     async def test_block_group_slash_skips_admin(self) -> None:
         plugin = make_plugin()
         event = DummyEvent(raw_message="/help", trimmed_message="help", is_admin=True)

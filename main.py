@@ -333,6 +333,20 @@ class ContentSafetyGuardPlugin(Star):
         except Exception:
             return event.get_message_str() or ""
 
+    @staticmethod
+    def _looks_like_group_slash_command(raw_message: str) -> bool:
+        """Check whether a group message semantically starts with a slash command.
+
+        AstrBot may represent leading mentions in `get_message_outline()` as
+        placeholders like ``[At:123456]``. Group commands accepted by AstrBot are
+        still prefix-based, so we intentionally only ignore leading whitespace and
+        leading mention placeholders before testing for ``/``.
+        """
+        if not raw_message:
+            return False
+        normalized = re.sub(r"^(?:\s|\[At:[^\]]+\])+", "", raw_message)
+        return normalized.startswith("/")
+
     async def _check_llm_audit_combined(
         self, user_text: str, ai_text: str
     ) -> tuple[str, str]:
@@ -626,8 +640,8 @@ class ContentSafetyGuardPlugin(Star):
             return
         if event.is_private_chat():
             return
-        message = self._get_raw_message_text(event).lstrip()
-        if not message.startswith("/"):
+        message = self._get_raw_message_text(event)
+        if not self._looks_like_group_slash_command(message):
             return
         if event.get_sender_id() == event.get_self_id():
             return
