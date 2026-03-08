@@ -2,7 +2,6 @@ import asyncio
 import json
 import re
 import time
-from typing import Any
 
 from pathlib import Path
 
@@ -16,7 +15,7 @@ from astrbot.api import logger
     name="astrbot_plugin_content_safety_guard",
     author="Kalo",
     desc="内容安全守卫 - 拦截不合规的LLM回复，引导模型重新生成合规内容，替代内置内容安全模块",
-    version="1.2.2",
+    version="1.2.4",
     repo="https://github.com/Kalospacer/astrbot_plugin_content_safety_guard",
 )
 class ContentSafetyGuardPlugin(Star):
@@ -28,8 +27,7 @@ class ContentSafetyGuardPlugin(Star):
 
     检测策略（按顺序执行，任一命中即判定不安全）:
     1. 关键词/正则匹配（带文本归一化预处理）
-    2. 百度 AIP 内容审核
-    3. LLM 自审查（用 LLM 自身判断回复是否合规）
+    2. LLM 自审查（用 LLM 自身判断回复是否合规）
 
     工作流程:
     1. [on_llm_request] 保存原始请求上下文（system_prompt + 用户文本）
@@ -59,25 +57,6 @@ class ContentSafetyGuardPlugin(Star):
         keywords_cfg = self.config.get("keywords", {})
         self.keywords_enabled: bool = keywords_cfg.get("enable", True)
         self.keywords_list: list[str] = keywords_cfg.get("extra_keywords", [])
-
-        # ─── 百度 AIP 配置 ───
-        baidu_cfg = self.config.get("baidu_aip", {})
-        self.baidu_enabled: bool = baidu_cfg.get("enable", False)
-        self.baidu_client: Any = None
-        if self.baidu_enabled:
-            try:
-                from aip import AipContentCensor
-
-                self.baidu_client = AipContentCensor(
-                    baidu_cfg.get("app_id", ""),
-                    baidu_cfg.get("api_key", ""),
-                    baidu_cfg.get("secret_key", ""),
-                )
-            except ImportError:
-                logger.warning(
-                    "[ContentSafetyGuard] 使用百度内容审核需要先 pip install baidu-aip"
-                )
-                self.baidu_enabled = False
 
         # ─── LLM 自审查配置 ───
         llm_audit_cfg = self.config.get("llm_audit", {})
@@ -148,9 +127,8 @@ class ContentSafetyGuardPlugin(Star):
             self._cleanup_task = asyncio.create_task(self._cleanup_expired_bans())
 
         logger.info(
-            f"[ContentSafetyGuard] 已加载 v1.2.2 | "
+            f"[ContentSafetyGuard] 已加载 v1.2.4 | "
             f"关键词: {'启用' if self.keywords_enabled else '禁用'}({len(self.keywords_list)}个) | "
-            f"百度AIP: {'启用' if self.baidu_enabled else '禁用'} | "
             f"LLM审查: {'启用' if self.llm_audit_enabled else '禁用'}"
             f"{(' [' + (self.llm_audit_provider or '默认') + ']') if self.llm_audit_enabled else ''} | "
             f"最大重试: {self.max_retries} | "
@@ -222,35 +200,6 @@ class ContentSafetyGuardPlugin(Star):
             except re.error:
                 if keyword.lower() in normalized:
                     return False, f"匹配到敏感词: {keyword}"
-        return True, ""
-
-    def _check_baidu_aip(self, text: str) -> tuple[bool, str]:
-        """百度 AIP 内容审核"""
-        if not self.baidu_enabled or not self.baidu_client:
-            return True, ""
-
-        try:
-            res = self.baidu_client.textCensorUserDefined(text)
-            if "conclusionType" not in res:
-                return False, "百度审核服务返回异常"
-            if res["conclusionType"] != 1:
-                if "data" in res:
-                    parts = []
-                    for item in res["data"]:
-                        if isinstance(item, dict):
-                            msg = item.get("msg", "")
-                            if msg:
-                                parts.append(msg)
-                    reason = (
-                        f"百度审核不通过: {'; '.join(parts)}"
-                        if parts
-                        else "百度审核不通过"
-                    )
-                else:
-                    reason = f"百度审核不通过: {res.get('conclusion', '未知原因')}"
-                return False, reason
-        except Exception as e:
-            logger.error(f"[ContentSafetyGuard] 百度AIP调用失败: {e}")
         return True, ""
 
     async def _check_llm_audit(
@@ -342,7 +291,7 @@ class ContentSafetyGuardPlugin(Star):
         return True, ""
 
     async def check_content_safety(self, text: str) -> tuple[bool, str]:
-        """组合安全检查：关键词 → 百度AIP → LLM审查，任一不通过即返回
+        """组合安全检查：关键词 → LLM审查，任一不通过即返回
 
         Returns:
             (is_safe, reason): 安全返回 (True, ""), 不安全返回 (False, reason)
@@ -357,12 +306,7 @@ class ContentSafetyGuardPlugin(Star):
         if not is_safe:
             return False, reason
 
-        # 2. 百度 AIP 检查
-        is_safe, reason = self._check_baidu_aip(text)
-        if not is_safe:
-            return False, reason
-
-        # 3. LLM 自审查（最慢，但语义理解最强）
+        # 2. LLM 自审查（最慢，但语义理解最强）
         is_safe, reason = await self._check_llm_audit(
             text, provider_id_override=self.llm_audit_output_provider
         )
@@ -372,17 +316,22 @@ class ContentSafetyGuardPlugin(Star):
         return True, ""
 
     def _check_fast(self, text: str) -> tuple[bool, str]:
-        """快速检查：关键词 + 百度AIP（不含 LLM 审查，零延迟）"""
+        """快速检查：仅关键词（不含 LLM 审查，零延迟）"""
         if not text or not text.strip():
             return True, ""
         normalized = self._normalize_text(text)
         is_safe, reason = self._check_keywords(text, normalized)
         if not is_safe:
             return False, reason
-        is_safe, reason = self._check_baidu_aip(text)
-        if not is_safe:
-            return False, reason
         return True, ""
+
+    @staticmethod
+    def _get_raw_message_text(event: AstrMessageEvent) -> str:
+        """Read raw message text before AstrBot trims wake prefixes like `/`."""
+        try:
+            return event.get_message_outline() or ""
+        except Exception:
+            return event.get_message_str() or ""
 
     async def _check_llm_audit_combined(
         self, user_text: str, ai_text: str
@@ -677,7 +626,7 @@ class ContentSafetyGuardPlugin(Star):
             return
         if event.is_private_chat():
             return
-        message = (event.get_message_str() or "").lstrip()
+        message = self._get_raw_message_text(event).lstrip()
         if not message.startswith("/"):
             return
         if event.get_sender_id() == event.get_self_id():

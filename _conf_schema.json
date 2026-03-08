@@ -30,7 +30,7 @@
         "default": true
     },
     "block_non_admin_slash_in_group": {
-        "description": "群聊中是否拦截非管理员发送的 / 开头消息（静默拦截）",
+        "description": "群聊中是否拦截非管理员发送的 / 开头消息（静默拦截；基于原始消息文本判断，不受 AstrBot 唤醒前缀裁剪影响）",
         "type": "bool",
         "default": true
     },
@@ -47,32 +47,6 @@
                 "description": "自定义敏感词列表（每项可以是正则表达式）",
                 "type": "list",
                 "default": []
-            }
-        }
-    },
-    "baidu_aip": {
-        "description": "百度智能云内容审核配置（需要 pip install baidu-aip）",
-        "type": "object",
-        "items": {
-            "enable": {
-                "description": "是否启用百度内容审核",
-                "type": "bool",
-                "default": false
-            },
-            "app_id": {
-                "description": "百度 AIP 应用 App ID",
-                "type": "string",
-                "default": ""
-            },
-            "api_key": {
-                "description": "百度 AIP 应用 API Key",
-                "type": "string",
-                "default": ""
-            },
-            "secret_key": {
-                "description": "百度 AIP 应用 Secret Key",
-                "type": "string",
-                "default": ""
             }
         }
     },

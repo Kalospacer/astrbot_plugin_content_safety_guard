@@ -15,8 +15,7 @@ AstrBot 内容安全插件：支持输入前置拦截、输出重生、黑名单
 按顺序执行，任一命中即不通过：
 
 1. 关键词 / 正则匹配（带文本归一化：去零宽字符、去中文字符间空格、统一小写）
-2. 百度 AIP 文本审核（可选）
-3. LLM 自审查（可选）
+2. LLM 自审查（可选）
 
 ## 配置说明
 
@@ -30,7 +29,7 @@ AstrBot 内容安全插件：支持输入前置拦截、输出重生、黑名单
 | `block_duplicate_reply` | `true` | 是否拦截与上一条模型回复完全一致的输出 |
 | `reply_placeholder_on_block` | `true` | 拦截后是否回复占位消息（false=静默） |
 | `group_only` | `true` | 是否仅在群聊生效 |
-| `block_non_admin_slash_in_group` | `true` | 群聊中是否拦截非管理员 `/` 开头消息 |
+| `block_non_admin_slash_in_group` | `true` | 群聊中是否拦截非管理员 `/` 开头消息（基于原始消息文本判断，不受 AstrBot 唤醒前缀裁剪影响） |
 
 ### 关键词
 
@@ -38,15 +37,6 @@ AstrBot 内容安全插件：支持输入前置拦截、输出重生、黑名单
 |---|---:|---|
 | `keywords.enable` | `true` | 是否启用关键词检查 |
 | `keywords.extra_keywords` | `[]` | 自定义关键词/正则列表 |
-
-### 百度 AIP
-
-| 配置项 | 默认值 | 说明 |
-|---|---:|---|
-| `baidu_aip.enable` | `false` | 是否启用百度审核 |
-| `baidu_aip.app_id` | `""` | App ID |
-| `baidu_aip.api_key` | `""` | API Key |
-| `baidu_aip.secret_key` | `""` | Secret Key |
 
 ### LLM 自审查
 
