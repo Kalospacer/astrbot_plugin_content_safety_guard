@@ -6,17 +6,29 @@ import time
 from pathlib import Path
 
 from astrbot.api.star import Context, Star, StarTools, register
-from astrbot.api.event import filter, AstrMessageEvent
+from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.provider import LLMResponse, ProviderRequest
 from astrbot.api import logger
 
 
+PLUGIN_NAME = "astrbot_plugin_content_safety_guard"
+PLUGIN_DISPLAY_NAME = "阿瓦隆 Avalon"
+PLUGIN_AUTHOR = "Kalospacer"
+PLUGIN_REPO = "https://github.com/Kalospacer/astrbot_plugin_content_safety_guard"
+PLUGIN_VERSION = "1.2.5"
+PLUGIN_DESC = (
+    "内容安全守卫 - 拦截用户提示词攻击和模型输出偏离人设问题，"
+    "支持前置/后置审核、关键词匹配、LLM 自审查、黑名单等功能"
+)
+AUDIT_SYSTEM_PROMPT = "你是内容安全审查员。只返回 JSON，不要附加任何解释。"
+
+
 @register(
-    name="astrbot_plugin_content_safety_guard",
-    author="Kalo",
-    desc="内容安全守卫 - 拦截不合规的LLM回复，引导模型重新生成合规内容，替代内置内容安全模块",
-    version="1.2.4",
-    repo="https://github.com/Kalospacer/astrbot_plugin_content_safety_guard",
+    name=PLUGIN_NAME,
+    author=PLUGIN_AUTHOR,
+    desc=PLUGIN_DESC,
+    version=PLUGIN_VERSION,
+    repo=PLUGIN_REPO,
 )
 class ContentSafetyGuardPlugin(Star):
     """内容安全守卫插件
@@ -31,7 +43,7 @@ class ContentSafetyGuardPlugin(Star):
 
     工作流程:
     1. [on_llm_request] 保存原始请求上下文（system_prompt + 用户文本）
-    2. [on_llm_response] 同时审查用户输入 + AI 回复 → 用户不通过直接拦截 / AI 不通过引导重试
+    2. [on_llm_response] 同时审查用户输入 + AI 回复 → 按 check_input 配置决定是否拦截用户 / AI 不通过引导重试
     """
 
     def __init__(self, context: Context, config: dict = None):
@@ -79,9 +91,28 @@ class ContentSafetyGuardPlugin(Star):
             pattern_text for pattern_text, _ in self._compiled_keyword_patterns
         ]
 
+        # ─── 白名单配置 ───
+        whitelist_cfg = self.config.get("whitelist", {})
+        self.whitelist_enabled: bool = whitelist_cfg.get("enable", False)
+        self.whitelist_users: list[tuple[str, str]] = self._prepare_user_match_list(
+            whitelist_cfg.get("users", [])
+        )
+        self._whitelist_user_keys: set[str] = {
+            self._build_user_match_key(platform, user_id)
+            for platform, user_id in self.whitelist_users
+        }
+
         # ─── LLM 自审查配置 ───
         llm_audit_cfg = self.config.get("llm_audit", {})
         self.llm_audit_enabled: bool = llm_audit_cfg.get("enable", False)
+        raw_llm_audit_mode = str(llm_audit_cfg.get("mode", "separate")).strip().lower()
+        if raw_llm_audit_mode not in ("separate", "combined_post"):
+            logger.warning(
+                "[ContentSafetyGuard] 未知 llm_audit.mode=%s，已回退为 separate",
+                raw_llm_audit_mode,
+            )
+            raw_llm_audit_mode = "separate"
+        self.llm_audit_mode: str = raw_llm_audit_mode
         self.llm_audit_provider: str = llm_audit_cfg.get("provider_id", "")
         self.llm_audit_input_provider: str = llm_audit_cfg.get("input_provider_id", "")
         self.llm_audit_output_provider: str = llm_audit_cfg.get(
@@ -147,11 +178,14 @@ class ContentSafetyGuardPlugin(Star):
         if self.blacklist_enabled:
             self._cleanup_task = asyncio.create_task(self._cleanup_expired_bans())
 
+        audit_provider_label = self.llm_audit_provider or "默认"
         logger.info(
-            f"[ContentSafetyGuard] 已加载 v1.2.4 | "
+            f"[ContentSafetyGuard] 已加载 v{PLUGIN_VERSION} | "
             f"关键词: {'启用' if self.keywords_enabled else '禁用'}({len(self.keywords_list)}个) | "
+            f"白名单: {'启用' if self.whitelist_enabled else '禁用'}"
+            f"{(f'({len(self._whitelist_user_keys)}个)') if self.whitelist_enabled else ''} | "
             f"LLM审查: {'启用' if self.llm_audit_enabled else '禁用'}"
-            f"{(' [' + (self.llm_audit_provider or '默认') + ']') if self.llm_audit_enabled else ''} | "
+            f"{(f' [{self.llm_audit_mode}|{audit_provider_label}]') if self.llm_audit_enabled else ''} | "
             f"最大重试: {self.max_retries} | "
             f"检查输入: {self.check_input} | 检查输出: {self.check_output} | "
             f"拦截重复回复: {self.block_duplicate_reply} | "
@@ -218,6 +252,67 @@ class ContentSafetyGuardPlugin(Star):
             if item:
                 result.append(item)
         return result
+
+    @staticmethod
+    def _normalize_platform_name(value: object) -> str:
+        """统一平台名比较口径。"""
+        if value is None:
+            return ""
+        return str(value).strip().lower()
+
+    @staticmethod
+    def _normalize_user_id(value: object) -> str:
+        """统一用户 ID 比较口径。"""
+        if value is None:
+            return ""
+        return str(value).strip()
+
+    @classmethod
+    def _build_user_match_key(cls, platform: object, user_id: object) -> str:
+        """构造平台+用户的唯一匹配键。"""
+        normalized_platform = cls._normalize_platform_name(platform)
+        normalized_user_id = cls._normalize_user_id(user_id)
+        if not normalized_platform or not normalized_user_id:
+            return ""
+        return f"{normalized_platform}:{normalized_user_id}"
+
+    @classmethod
+    def _prepare_user_match_list(cls, values: object) -> list[tuple[str, str]]:
+        """清洗白名单用户项配置，忽略非法、重复或空白项。"""
+        if not isinstance(values, list):
+            return []
+        result: list[tuple[str, str]] = []
+        seen: set[str] = set()
+        for value in values:
+            if not isinstance(value, dict):
+                continue
+            template_key = str(value.get("__template_key", "")).strip()
+            if template_key and template_key != "user":
+                continue
+            key = cls._build_user_match_key(
+                value.get("platform", ""), value.get("user_id", "")
+            )
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            platform, user_id = key.split(":", 1)
+            result.append((platform, user_id))
+        return result
+
+    def _get_event_user_match_key(self, event: AstrMessageEvent) -> str:
+        """从事件中提取平台+用户的匹配键。"""
+        return self._build_user_match_key(
+            event.get_platform_name(), event.get_sender_id()
+        )
+
+    def _is_whitelisted(self, event: AstrMessageEvent) -> bool:
+        """判断当前事件发送者是否命中白名单。"""
+        if not self.whitelist_enabled or not self._whitelist_user_keys:
+            return False
+        user_key = self._get_event_user_match_key(event)
+        if not user_key:
+            return False
+        return user_key in self._whitelist_user_keys
 
     @staticmethod
     def _extract_json_object(text: str) -> dict | None:
@@ -332,7 +427,7 @@ class ContentSafetyGuardPlugin(Star):
             resp = await self.context.llm_generate(
                 chat_provider_id=provider_id,
                 prompt=audit_prompt,
-                system_prompt="你是内容安全审查员。只返回 JSON，不要附加任何解释。",
+                system_prompt=AUDIT_SYSTEM_PROMPT,
             )
 
             result_text = (resp.completion_text or "").strip()
@@ -348,6 +443,39 @@ class ContentSafetyGuardPlugin(Star):
             logger.error(f"[ContentSafetyGuard] LLM审查调用失败: {e}")
             # 调用失败时放行，避免误杀
             return True, ""
+
+    async def _check_output_llm_audit(
+        self, user_text: str, ai_text: str
+    ) -> tuple[str, str]:
+        """输出阶段的 LLM 审查，兼容 separate / combined_post 两种模式。"""
+        if not self.llm_audit_enabled or not self.check_output:
+            return "pass", ""
+        if self.llm_audit_mode == "combined_post":
+            return await self._check_llm_audit_combined(user_text, ai_text)
+        is_safe, reason = await self._check_llm_audit(
+            ai_text, provider_id_override=self.llm_audit_output_provider
+        )
+        if not is_safe:
+            return "ai", reason
+        return "pass", ""
+
+    def _apply_user_input_block(
+        self,
+        event: AstrMessageEvent,
+        sender_id: str,
+        reason: str,
+        response: LLMResponse | None = None,
+    ) -> None:
+        """拦截不安全的用户输入，可在请求前或组合后置审查阶段复用。"""
+        logger.info(f"[ContentSafetyGuard] 用户输入未通过安全检查: {reason}")
+        self._add_violation(sender_id, reason)
+        if self.reply_placeholder_on_block:
+            if response is not None:
+                response.completion_text = self.input_block_message
+            else:
+                event.set_result(self.input_block_message)
+            return
+        event.stop_event()
 
     @staticmethod
     def _parse_llm_audit_result(text: str) -> tuple[bool, str]:
@@ -435,12 +563,12 @@ class ContentSafetyGuardPlugin(Star):
     async def _check_llm_audit_combined(
         self, user_text: str, ai_text: str
     ) -> tuple[str, str]:
-        """组合 LLM 审查 — 一次调用同时审查用户输入和 AI 回复
+        """组合 LLM 审查 — 一次调用同时审查用户输入和 AI 回复。
 
         Returns:
-            ("pass", "")       — 均安全
-            ("user", reason)   — 用户输入不安全
-            ("ai", reason)     — AI 回复不安全
+            ("pass", "")       — 当前配置下无需拦截
+            ("user", reason)   — 用户输入不安全，且 check_input=true
+            ("ai", reason)     — AI 回复不安全，需要重试
         """
         if not self.llm_audit_enabled:
             return "pass", ""
@@ -470,27 +598,51 @@ class ContentSafetyGuardPlugin(Star):
             resp = await self.context.llm_generate(
                 chat_provider_id=provider_id,
                 prompt=prompt,
-                system_prompt="你是内容安全审查员。只返回 JSON，不要附加任何解释。",
+                system_prompt=AUDIT_SYSTEM_PROMPT,
             )
 
             result_text = (resp.completion_text or "").strip()
-            target, reason = self._parse_combined_audit_result(result_text)
+            user_safe, ai_safe, reason = self._parse_combined_audit_result(result_text)
             audit_reason = reason or self._clip_log_text(result_text)
+
+            target = "pass"
+            action_reason = ""
+            if not user_safe and self.check_input:
+                target = "user"
+                action_reason = (
+                    f"LLM审查不通过(用户输入): {reason}"
+                    if reason
+                    else "LLM审查不通过(用户输入)"
+                )
+            elif not ai_safe:
+                target = "ai"
+                action_reason = (
+                    f"LLM审查不通过(AI回复): {reason}"
+                    if reason
+                    else "LLM审查不通过(AI回复)"
+                )
+            elif not user_safe:
+                logger.info(
+                    "[ContentSafetyGuard] 组合审查命中用户输入风险，但 check_input=false，按配置放行用户分支"
+                )
+
             logger.info(
-                f"[ContentSafetyGuard] LLM组合审查结果: {target} | "
-                f"原因: {audit_reason or '无'}"
+                "[ContentSafetyGuard] LLM组合审查结果: "
+                f"user={'通过' if user_safe else '不通过'} | "
+                f"ai={'通过' if ai_safe else '不通过'} | "
+                f"生效动作: {target} | 原因: {audit_reason or '无'}"
             )
-            return target, reason
+            return target, action_reason
 
         except Exception as e:
             logger.error(f"[ContentSafetyGuard] LLM组合审查调用失败: {e}")
             return "pass", ""
 
     @staticmethod
-    def _parse_combined_audit_result(text: str) -> tuple[str, str]:
-        """解析组合审查返回的 JSON 结果"""
+    def _parse_combined_audit_result(text: str) -> tuple[bool, bool, str]:
+        """解析组合审查返回的 JSON 结果。"""
         if not text:
-            return "pass", ""
+            return True, True, ""
 
         data = ContentSafetyGuardPlugin._extract_json_object(text)
         if data is not None:
@@ -500,22 +652,8 @@ class ContentSafetyGuardPlugin(Star):
             ai_safe = ContentSafetyGuardPlugin._coerce_json_bool(
                 data.get("ai_safe", True)
             )
-            reason = str(data.get("reason", ""))
-            if not user_safe:
-                return (
-                    "user",
-                    f"LLM审查不通过(用户输入): {reason}"
-                    if reason
-                    else "LLM审查不通过(用户输入)",
-                )
-            if not ai_safe:
-                return (
-                    "ai",
-                    f"LLM审查不通过(AI回复): {reason}"
-                    if reason
-                    else "LLM审查不通过(AI回复)",
-                )
-            return "pass", ""
+            reason = str(data.get("reason", "")).strip()
+            return user_safe, ai_safe, reason
 
         # 解析失败，启发式归因到 AI
         lowered = text.lower()
@@ -523,8 +661,8 @@ class ContentSafetyGuardPlugin(Star):
             w in lowered
             for w in ("不安全", "不合规", "unsafe", '"safe": false', '"safe":false')
         ):
-            return "ai", f"LLM审查不通过: {text[:100]}"
-        return "pass", ""
+            return True, False, text[:100]
+        return True, True, ""
 
     # ══════════════════════════════════════════════════════════════
     # 黑名单管理
@@ -867,7 +1005,7 @@ class ContentSafetyGuardPlugin(Star):
     async def on_llm_request_hook(
         self, event: AstrMessageEvent, request: ProviderRequest
     ) -> None:
-        """LLM 请求前钩子 — 黑名单拦截 + 输入检查 + 保存上下文 + 注入安全约束"""
+        """LLM 请求前钩子 — 黑名单优先，其次白名单、输入检查与安全提示注入。"""
         # 默认仅作用于群聊，私聊放行
         if self.group_only and event.is_private_chat():
             return
@@ -883,6 +1021,13 @@ class ContentSafetyGuardPlugin(Star):
             event.stop_event()
             return
 
+        if self._is_whitelisted(event):
+            logger.info(
+                "[ContentSafetyGuard] 白名单用户跳过请求审查: "
+                f"user={sender_id} platform={event.get_platform_name()}"
+            )
+            return
+
         event.set_extra("_csg_system_prompt", request.system_prompt or "")
         event.set_extra("_csg_user_text", request.prompt or event.get_message_str())
         user_text = event.get_extra("_csg_user_text", "")
@@ -890,17 +1035,13 @@ class ContentSafetyGuardPlugin(Star):
         # ─── 用户输入前置检查（在 LLM 生成前执行）───
         if self.check_input and user_text and user_text.strip():
             is_safe, reason = self._check_fast(user_text)
-            if is_safe and self.llm_audit_enabled:
+            if is_safe and self.llm_audit_enabled and self.llm_audit_mode == "separate":
                 is_safe, reason = await self._check_llm_audit(
                     user_text, provider_id_override=self.llm_audit_input_provider
                 )
 
             if not is_safe:
-                logger.info(f"[ContentSafetyGuard] 用户输入前置检查未通过: {reason}")
-                self._add_violation(sender_id, reason)
-                if self.reply_placeholder_on_block:
-                    event.set_result(self.input_block_message)
-                event.stop_event()
+                self._apply_user_input_block(event, sender_id, reason)
                 return
 
         # 注入屏蔽词约束到 system_prompt，从源头引导 LLM 规避敏感内容
@@ -918,13 +1059,15 @@ class ContentSafetyGuardPlugin(Star):
     async def on_llm_response_hook(
         self, event: AstrMessageEvent, response: LLMResponse
     ) -> None:
-        """LLM 响应后钩子 — 审查 AI 回复并按需重试
+        """LLM 响应后钩子 — 审查 AI 回复并按需重试。
 
         流程:
         1. 快速检查 AI 回复 → 不通过进入重试
         2. 重复回复检查 → 命中进入重试
-        3. LLM 审查 AI 回复 → 不通过进入重试
-        4. 重试时仅检查 AI 新回复
+        3. 输出阶段 LLM 审查
+           - separate: 仅审查 AI 回复
+           - combined_post: 同时审查用户输入与 AI 回复
+        4. 重试时仅重新生成 AI 回复；组合审查命中用户输入仅在 check_input=true 时才会按用户分支拦截
         """
         # 默认仅作用于群聊，私聊放行
         if self.group_only and event.is_private_chat():
@@ -939,7 +1082,17 @@ class ContentSafetyGuardPlugin(Star):
         ai_text = response.completion_text
         if not ai_text or not ai_text.strip():
             return
+
+        sender_id = event.get_sender_id()
+        if self._is_whitelisted(event):
+            logger.info(
+                "[ContentSafetyGuard] 白名单用户跳过响应审查: "
+                f"user={sender_id} platform={event.get_platform_name()}"
+            )
+            return
+
         session_id = event.get_session_id() or event.unified_msg_origin
+        user_text = event.get_extra("_csg_user_text", event.get_message_str())
 
         ai_fail_reason = ""
         if self.check_output:
@@ -954,12 +1107,14 @@ class ContentSafetyGuardPlugin(Star):
             ai_fail_reason = "与上一条模型回复完全重复"
             logger.info(f"[ContentSafetyGuard] 命中重复回复拦截: session={session_id}")
 
-        # ─── LLM 审查（仅审查 AI 回复）───
-        if not ai_fail_reason and self.llm_audit_enabled and self.check_output:
-            is_safe, reason = await self._check_llm_audit(
-                ai_text, provider_id_override=self.llm_audit_output_provider
-            )
-            if not is_safe:
+        if not ai_fail_reason and self.check_output:
+            target, reason = await self._check_output_llm_audit(user_text, ai_text)
+            if target == "user":
+                self._apply_user_input_block(
+                    event, sender_id, reason or "LLM审查不通过(用户输入)", response
+                )
+                return
+            if target == "ai":
                 ai_fail_reason = reason
 
         # 全部通过
@@ -994,7 +1149,7 @@ class ContentSafetyGuardPlugin(Star):
         system_prompt = event.get_extra("_csg_system_prompt", "")
         reason = ai_fail_reason
 
-        # ─── 重试循环（仅检查 AI 新回复，用户输入已通过）───
+        # ─── 重试循环（仅重新生成 AI 回复；组合模式下复用原始用户输入）───
         for attempt in range(1, self.max_retries + 1):
             logger.info(
                 f"[ContentSafetyGuard] 第 {attempt}/{self.max_retries} 次重新生成"
@@ -1029,19 +1184,37 @@ class ContentSafetyGuardPlugin(Star):
                     )
                     continue
 
-                new_is_safe, new_reason = await self.check_content_safety(new_text)
-                if new_is_safe:
-                    logger.info(
-                        f"[ContentSafetyGuard] 第 {attempt} 次重试通过安全检查 ✓"
+                if self.check_output:
+                    new_is_safe, new_reason = self._check_fast(new_text)
+                    if not new_is_safe:
+                        logger.info(
+                            f"[ContentSafetyGuard] 第 {attempt} 次重试仍不通过: {new_reason}"
+                        )
+                        reason = new_reason
+                        continue
+
+                    target, new_reason = await self._check_output_llm_audit(
+                        user_text, new_text
                     )
-                    response.completion_text = new_text
-                    self._remember_reply(session_id, new_text)
-                    return
-                else:
-                    logger.info(
-                        f"[ContentSafetyGuard] 第 {attempt} 次重试仍不通过: {new_reason}"
-                    )
-                    reason = new_reason
+                    if target == "user":
+                        self._apply_user_input_block(
+                            event,
+                            sender_id,
+                            new_reason or "LLM审查不通过(用户输入)",
+                            response,
+                        )
+                        return
+                    if target == "ai":
+                        logger.info(
+                            f"[ContentSafetyGuard] 第 {attempt} 次重试仍不通过: {new_reason}"
+                        )
+                        reason = new_reason
+                        continue
+
+                logger.info(f"[ContentSafetyGuard] 第 {attempt} 次重试通过安全检查 ✓")
+                response.completion_text = new_text
+                self._remember_reply(session_id, new_text)
+                return
 
             except Exception as e:
                 logger.error(
