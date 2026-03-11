@@ -4,6 +4,7 @@ import sys
 import tempfile
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 TEMP_DATA_DIR = (
     Path(tempfile.gettempdir()) / "astrbot_plugin_content_safety_guard_tests"
@@ -12,17 +13,6 @@ TEMP_DATA_DIR.mkdir(parents=True, exist_ok=True)
 MODULE_PATH = Path(__file__).resolve().parents[1] / "main.py"
 README_PATH = Path(__file__).resolve().parents[1] / "README.md"
 METADATA_PATH = Path(__file__).resolve().parents[1] / "metadata.yaml"
-
-
-class DummyLogger:
-    def info(self, *_args, **_kwargs):
-        return None
-
-    def warning(self, *_args, **_kwargs):
-        return None
-
-    def error(self, *_args, **_kwargs):
-        return None
 
 
 class DummyCommandGroup:
@@ -64,49 +54,66 @@ class DummyFilter:
         return lambda func: func
 
 
-def install_astrbot_stubs() -> None:
-    logger = DummyLogger()
+class DummyStar:
+    def __init__(self, context):
+        self.context = context
+
+
+class DummyStarTools:
+    @staticmethod
+    def get_data_dir() -> Path:
+        return TEMP_DATA_DIR
+
+
+def register(**_kwargs):
+    return lambda cls: cls
+
+
+def build_stub_modules() -> dict[str, ModuleType]:
+    logger = MagicMock()
     astrbot_module = ModuleType("astrbot")
     api_module = ModuleType("astrbot.api")
     star_module = ModuleType("astrbot.api.star")
     event_module = ModuleType("astrbot.api.event")
     provider_module = ModuleType("astrbot.api.provider")
 
-    class DummyStar:
-        def __init__(self, context):
-            self.context = context
-
-    class DummyStarTools:
-        @staticmethod
-        def get_data_dir() -> Path:
-            return TEMP_DATA_DIR
-
-    def register(**_kwargs):
-        return lambda cls: cls
-
     star_module.Context = object
     star_module.Star = DummyStar
     star_module.StarTools = DummyStarTools
     star_module.register = register
+
     event_module.AstrMessageEvent = object
     event_module.filter = DummyFilter()
+
     provider_module.LLMResponse = object
     provider_module.ProviderRequest = object
+
     api_module.logger = logger
     astrbot_module.api = api_module
 
-    sys.modules["astrbot"] = astrbot_module
-    sys.modules["astrbot.api"] = api_module
-    sys.modules["astrbot.api.star"] = star_module
-    sys.modules["astrbot.api.event"] = event_module
-    sys.modules["astrbot.api.provider"] = provider_module
+    return {
+        "astrbot": astrbot_module,
+        "astrbot.api": api_module,
+        "astrbot.api.star": star_module,
+        "astrbot.api.event": event_module,
+        "astrbot.api.provider": provider_module,
+    }
 
 
-install_astrbot_stubs()
-spec = importlib.util.spec_from_file_location("content_safety_guard_main", MODULE_PATH)
-module = importlib.util.module_from_spec(spec)
-assert spec is not None and spec.loader is not None
-spec.loader.exec_module(module)
+def load_plugin_module():
+    spec = importlib.util.spec_from_file_location(
+        "content_safety_guard_main", MODULE_PATH
+    )
+    module = importlib.util.module_from_spec(spec)
+    assert spec is not None and spec.loader is not None
+
+    with patch.dict(sys.modules, build_stub_modules()):
+        spec.loader.exec_module(module)
+
+    return module
+
+
+module = load_plugin_module()
 ContentSafetyGuardPlugin = module.ContentSafetyGuardPlugin
 AUDIT_SYSTEM_PROMPT = module.AUDIT_SYSTEM_PROMPT
 
