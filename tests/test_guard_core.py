@@ -140,14 +140,19 @@ class DummyContext:
 
 
 class DummyEvent:
-    def __init__(self, sender_id: str = "10001", platform_name: str = "aiocqhttp"):
+    def __init__(
+        self,
+        sender_id: str = "10001",
+        platform_name: str = "aiocqhttp",
+        unified_msg_origin: str = "aiocqhttp:group:session-1",
+    ):
         self.sender_id = sender_id
         self.platform_name = platform_name
         self._extras: dict[str, object] = {}
         self.result = None
         self.stopped = False
         self.message = "hello"
-        self.unified_msg_origin = "aiocqhttp:group:session-1"
+        self.unified_msg_origin = unified_msg_origin
 
     def is_private_chat(self):
         return False
@@ -208,22 +213,16 @@ def test_register_metadata_and_docs_are_unified():
     assert readme_text.splitlines()[0] == f"# {module.PLUGIN_DISPLAY_NAME}"
 
 
-def test_whitelist_matching_normalizes_platform_and_user_id():
+def test_whitelist_matches_unified_msg_origin_sid():
     plugin = build_plugin(
         {
             "whitelist": {
                 "enable": True,
-                "users": [
-                    {
-                        "__template_key": "user",
-                        "platform": "AioCQHTTP",
-                        "user_id": "10001",
-                    }
-                ],
+                "sids": ["aiocqhttp:group:session-1"],
             }
         }
     )
-    event = DummyEvent(sender_id="10001", platform_name="aiocqhttp")
+    event = DummyEvent(unified_msg_origin="aiocqhttp:group:session-1")
     assert plugin._is_whitelisted(event) is True
 
 
@@ -232,20 +231,18 @@ def test_blacklist_has_priority_over_whitelist_in_request_hook():
         {
             "whitelist": {
                 "enable": True,
-                "users": [
-                    {
-                        "__template_key": "user",
-                        "platform": "aiocqhttp",
-                        "user_id": "10001",
-                    }
-                ],
+                "sids": ["aiocqhttp:group:session-1"],
             }
         }
     )
     plugin.blacklist_enabled = True
     plugin._blacklist["10001"] = float("inf")
 
-    event = DummyEvent(sender_id="10001", platform_name="aiocqhttp")
+    event = DummyEvent(
+        sender_id="10001",
+        platform_name="aiocqhttp",
+        unified_msg_origin="aiocqhttp:group:session-1",
+    )
     request = DummyRequest()
     run(plugin.on_llm_request_hook(event, request))
 
@@ -364,6 +361,24 @@ def test_combined_audit_uses_shared_system_prompt_constant():
 
     assert plugin.context.llm_calls
     assert plugin.context.llm_calls[0]["system_prompt"] == AUDIT_SYSTEM_PROMPT
+
+
+def test_combined_audit_uses_configurable_prompt_template():
+    plugin = build_plugin(
+        {
+            "llm_audit": {
+                "enable": True,
+                "mode": "combined_post",
+                "provider_id": "audit-provider",
+                "combined_prompt": "KW={keywords}|U={user_text}|A={ai_text}",
+            }
+        }
+    )
+
+    run(plugin._check_llm_audit_combined("user text", "ai text"))
+
+    assert plugin.context.llm_calls
+    assert plugin.context.llm_calls[0]["prompt"] == "KW=无指定|U=user text|A=ai text"
 
 
 def run_all_tests() -> None:

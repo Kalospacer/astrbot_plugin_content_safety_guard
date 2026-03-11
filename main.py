@@ -94,13 +94,10 @@ class ContentSafetyGuardPlugin(Star):
         # ─── 白名单配置 ───
         whitelist_cfg = self.config.get("whitelist", {})
         self.whitelist_enabled: bool = whitelist_cfg.get("enable", False)
-        self.whitelist_users: list[tuple[str, str]] = self._prepare_user_match_list(
-            whitelist_cfg.get("users", [])
+        self.whitelist_sids: list[str] = self._prepare_sid_list(
+            whitelist_cfg.get("sids", [])
         )
-        self._whitelist_user_keys: set[str] = {
-            self._build_user_match_key(platform, user_id)
-            for platform, user_id in self.whitelist_users
-        }
+        self._whitelist_sid_set: set[str] = set(self.whitelist_sids)
 
         # ─── LLM 自审查配置 ───
         llm_audit_cfg = self.config.get("llm_audit", {})
@@ -125,6 +122,16 @@ class ContentSafetyGuardPlugin(Star):
                 "请严格仅返回如下 JSON 格式，不要包含任何额外文字：\n"
                 '{"safe": true/false, "reason": "简要说明原因"}\n\n'
                 "待审查文本：\n{text}"
+            ),
+        )
+        self.llm_audit_combined_prompt: str = llm_audit_cfg.get(
+            "combined_prompt",
+            (
+                "请分别判断以下对话中的【用户消息】和【AI回复】是否包含以下要素：{keywords}\n"
+                "请严格仅返回如下 JSON 格式，不要包含任何额外文字：\n"
+                '{"user_safe": true/false, "ai_safe": true/false, "reason": "简要说明原因"}\n\n'
+                "【用户消息】：\n{user_text}\n\n"
+                "【AI回复】：\n{ai_text}"
             ),
         )
 
@@ -183,7 +190,7 @@ class ContentSafetyGuardPlugin(Star):
             f"[ContentSafetyGuard] 已加载 v{PLUGIN_VERSION} | "
             f"关键词: {'启用' if self.keywords_enabled else '禁用'}({len(self.keywords_list)}个) | "
             f"白名单: {'启用' if self.whitelist_enabled else '禁用'}"
-            f"{(f'({len(self._whitelist_user_keys)}个)') if self.whitelist_enabled else ''} | "
+            f"{(f'({len(self._whitelist_sid_set)}个SID)') if self.whitelist_enabled else ''} | "
             f"LLM审查: {'启用' if self.llm_audit_enabled else '禁用'}"
             f"{(f' [{self.llm_audit_mode}|{audit_provider_label}]') if self.llm_audit_enabled else ''} | "
             f"最大重试: {self.max_retries} | "
@@ -254,65 +261,39 @@ class ContentSafetyGuardPlugin(Star):
         return result
 
     @staticmethod
-    def _normalize_platform_name(value: object) -> str:
-        """统一平台名比较口径。"""
-        if value is None:
-            return ""
-        return str(value).strip().lower()
-
-    @staticmethod
-    def _normalize_user_id(value: object) -> str:
-        """统一用户 ID 比较口径。"""
+    def _normalize_sid(value: object) -> str:
+        """统一 AstrBot SID 比较口径。"""
         if value is None:
             return ""
         return str(value).strip()
 
     @classmethod
-    def _build_user_match_key(cls, platform: object, user_id: object) -> str:
-        """构造平台+用户的唯一匹配键。"""
-        normalized_platform = cls._normalize_platform_name(platform)
-        normalized_user_id = cls._normalize_user_id(user_id)
-        if not normalized_platform or not normalized_user_id:
-            return ""
-        return f"{normalized_platform}:{normalized_user_id}"
-
-    @classmethod
-    def _prepare_user_match_list(cls, values: object) -> list[tuple[str, str]]:
-        """清洗白名单用户项配置，忽略非法、重复或空白项。"""
+    def _prepare_sid_list(cls, values: object) -> list[str]:
+        """清洗白名单 SID 配置，忽略非法、重复或空白项。"""
         if not isinstance(values, list):
             return []
-        result: list[tuple[str, str]] = []
+        result: list[str] = []
         seen: set[str] = set()
         for value in values:
-            if not isinstance(value, dict):
+            sid = cls._normalize_sid(value)
+            if not sid or sid in seen:
                 continue
-            template_key = str(value.get("__template_key", "")).strip()
-            if template_key and template_key != "user":
-                continue
-            key = cls._build_user_match_key(
-                value.get("platform", ""), value.get("user_id", "")
-            )
-            if not key or key in seen:
-                continue
-            seen.add(key)
-            platform, user_id = key.split(":", 1)
-            result.append((platform, user_id))
+            seen.add(sid)
+            result.append(sid)
         return result
 
-    def _get_event_user_match_key(self, event: AstrMessageEvent) -> str:
-        """从事件中提取平台+用户的匹配键。"""
-        return self._build_user_match_key(
-            event.get_platform_name(), event.get_sender_id()
-        )
+    def _get_event_sid(self, event: AstrMessageEvent) -> str:
+        """从事件中提取 AstrBot 统一消息来源 SID。"""
+        return self._normalize_sid(getattr(event, "unified_msg_origin", ""))
 
     def _is_whitelisted(self, event: AstrMessageEvent) -> bool:
-        """判断当前事件发送者是否命中白名单。"""
-        if not self.whitelist_enabled or not self._whitelist_user_keys:
+        """判断当前事件是否命中 SID 白名单。"""
+        if not self.whitelist_enabled or not self._whitelist_sid_set:
             return False
-        user_key = self._get_event_user_match_key(event)
-        if not user_key:
+        sid = self._get_event_sid(event)
+        if not sid:
             return False
-        return user_key in self._whitelist_user_keys
+        return sid in self._whitelist_sid_set
 
     @staticmethod
     def _extract_json_object(text: str) -> dict | None:
@@ -587,12 +568,13 @@ class ContentSafetyGuardPlugin(Star):
             keywords_str = (
                 "、".join(self.keywords_list) if self.keywords_list else "无指定"
             )
-            prompt = (
-                f"请分别判断以下对话中的【用户消息】和【AI回复】是否包含以下要素：{keywords_str}\n"
-                "请严格仅返回如下 JSON 格式，不要包含任何额外文字：\n"
-                '{"user_safe": true/false, "ai_safe": true/false, "reason": "简要说明原因"}\n\n'
-                f"【用户消息】：\n{user_text}\n\n"
-                f"【AI回复】：\n{ai_text}"
+            prompt = self._render_template(
+                self.llm_audit_combined_prompt,
+                {
+                    "keywords": keywords_str,
+                    "user_text": user_text,
+                    "ai_text": ai_text,
+                },
             )
 
             resp = await self.context.llm_generate(
@@ -1022,9 +1004,10 @@ class ContentSafetyGuardPlugin(Star):
             return
 
         if self._is_whitelisted(event):
+            sid = self._get_event_sid(event)
             logger.info(
-                "[ContentSafetyGuard] 白名单用户跳过请求审查: "
-                f"user={sender_id} platform={event.get_platform_name()}"
+                "[ContentSafetyGuard] 白名单 SID 跳过请求审查: "
+                f"sid={sid or 'unknown'} user={sender_id}"
             )
             return
 
@@ -1085,9 +1068,10 @@ class ContentSafetyGuardPlugin(Star):
 
         sender_id = event.get_sender_id()
         if self._is_whitelisted(event):
+            sid = self._get_event_sid(event)
             logger.info(
-                "[ContentSafetyGuard] 白名单用户跳过响应审查: "
-                f"user={sender_id} platform={event.get_platform_name()}"
+                "[ContentSafetyGuard] 白名单 SID 跳过响应审查: "
+                f"sid={sid or 'unknown'} user={sender_id}"
             )
             return
 
