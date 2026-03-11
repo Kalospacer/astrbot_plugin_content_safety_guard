@@ -1,136 +1,164 @@
 {
-    "max_retries": {
-        "description": "LLM 回复不合规时的最大重试次数",
-        "type": "int",
-        "default": 2
-    },
-    "check_input": {
-        "description": "是否在 LLM 请求前检查用户输入（不通过则直接拦截，不会调用模型）",
+  "max_retries": {
+    "description": "最大重试次数",
+    "hint": "LLM 回复不合规时的最大重试次数。建议较低值例如1，大多数提示词污染情况无法通过重试解决。",
+    "type": "int",
+    "default": 1
+  },
+  "check_input": {
+    "description": "检查用户输入",
+    "hint": "是否在 LLM 请求前检查用户输入；不通过会直接拦截且不会调用模型。",
+    "type": "bool",
+    "default": false
+  },
+  "check_output": {
+    "description": "检查模型输出",
+    "hint": "是否检查 LLM 回复的内容安全；不通过会引导重新生成。",
+    "type": "bool",
+    "default": false
+  },
+  "block_duplicate_reply": {
+    "description": "拦截重复回复",
+    "hint": "是否拦截与上一条模型回复完全一致的内容；命中后要求重新生成。小功能用来防止某些模型不停复读自己上一句话。",
+    "type": "bool",
+    "default": false
+  },
+  "reply_placeholder_on_block": {
+    "description": "拦截后回复默认消息",
+    "hint": "关闭后改为静默拦截，不再向用户发送默认提示，提示消息的内容在 block_message 中配置。",
+    "type": "bool",
+    "default": false
+  },
+  "group_only": {
+    "description": "仅群聊生效",
+    "hint": "开启后私聊不受本插件影响。",
+    "type": "bool",
+    "default": true
+  },
+  "block_non_admin_slash_in_group": {
+    "description": "拦截群聊非管理员斜杠消息",
+    "hint": "群聊中是否拦截非管理员发送的 / 开头消息；小功能防止群里其他人滥用命令。",
+    "type": "bool",
+    "default": false
+  },
+  "keywords": {
+    "description": "关键词审核",
+    "hint": "关键词审核配置；在LLM审核前会先进行快速的文本匹配避免简单词语命中审核。",
+    "type": "object",
+    "items": {
+      "enable": {
+        "description": "启用关键词检查",
+        "hint": "关闭后将跳过纯文本关键词与正则规则的匹配。常用于出现歧义词不想硬拦截。",
+        "type": "bool",
+        "default": true
+      },
+      "plain_keywords": {
+        "description": "纯文本关键词",
+        "hint": "纯文本敏感词列表，不按正则解析，推荐大多数场景优先使用。",
+        "type": "list",
+        "default": []
+      },
+      "regex_rules": {
+        "description": "正则规则",
+        "hint": "正则规则列表，适合复杂匹配场景；非法规则会被忽略并记录警告。",
+        "type": "list",
+        "default": []
+      }
+    }
+  },
+  "llm_audit": {
+    "description": "LLM 自审查",
+    "hint": "可分别为用户输入前置审查与模型输出审查指定不同提供商；会增加延迟和 API 调用量。",
+    "type": "object",
+    "items": {
+      "enable": {
+        "description": "启用 LLM 审查",
+        "hint": "关闭后不会调用LLM进行审查。如启用了上方的关键词审核仍会简单匹配审核。"
         "type": "bool",
         "default": false
-    },
-    "check_output": {
-        "description": "是否检查 LLM 回复的内容安全（不通过则引导重新生成）",
-        "type": "bool",
-        "default": true
-    },
-    "block_duplicate_reply": {
-        "description": "是否拦截与上一条模型回复完全一致的内容（命中后要求重新生成）",
-        "type": "bool",
-        "default": true
-    },
-    "reply_placeholder_on_block": {
-        "description": "拦截后是否回复占位消息（关闭后改为静默拦截）",
-        "type": "bool",
-        "default": true
-    },
-    "group_only": {
-        "description": "是否默认仅在群聊中生效（开启后私聊不受本插件影响）",
-        "type": "bool",
-        "default": true
-    },
-    "block_non_admin_slash_in_group": {
-        "description": "群聊中是否拦截非管理员发送的 / 开头消息（静默拦截；基于原始消息文本判断，不受 AstrBot 唤醒前缀裁剪影响）",
-        "type": "bool",
-        "default": true
-    },
-    "keywords": {
-        "description": "关键词审核配置（自动进行文本归一化：去除零宽字符、中文间空格等）",
-        "type": "object",
-        "items": {
-            "enable": {
-                "description": "是否启用关键词检查（支持正则表达式）",
-                "type": "bool",
-                "default": true
-            },
-            "extra_keywords": {
-                "description": "自定义敏感词列表（每项可以是正则表达式）",
-                "type": "list",
-                "default": []
-            }
-        }
-    },
-    "llm_audit": {
-        "description": "LLM 自审查配置 — 可分别为用户输入前置审查与模型输出审查指定不同提供商（会增加延迟和 API 调用量）",
-        "type": "object",
-        "items": {
-            "enable": {
-                "description": "是否启用 LLM 自审查（默认关闭）",
-                "type": "bool",
-                "default": false
-            },
-            "provider_id": {
-                "description": "审查默认提供商（输入/输出未单独配置时使用）",
-                "type": "string",
-                "default": "",
-                "_special": "select_provider",
-                "hint": "通过下拉选择提供商，不需要手写 ID"
-            },
-            "input_provider_id": {
-                "description": "用户输入审查使用的提供商（留空则回退 llm_audit.provider_id）",
-                "type": "string",
-                "default": "",
-                "_special": "select_provider",
-                "hint": "可单独配置更快更便宜的小模型用于输入前置审查"
-            },
-            "output_provider_id": {
-                "description": "模型输出审查使用的提供商（留空则回退 llm_audit.provider_id）",
-                "type": "string",
-                "default": "",
-                "_special": "select_provider",
-                "hint": "可单独配置更稳妥的小模型用于输出审查"
-            },
-            "prompt": {
-                "description": "审查提示词模板（{text}=待审查文本，{keywords}=用户配置的关键词列表，可完全自定义，只需确保返回 {\"safe\": bool, \"reason\": str} 格式）",
-                "type": "string",
-                "default": "请判断以下文本是否包含以下要素：{keywords}\n请严格仅返回如下 JSON 格式，不要包含任何额外文字：\n{\"safe\": true/false, \"reason\": \"简要说明原因\"}\n\n待审查文本：\n{text}"
-            }
-        }
-    },
-    "safety_prompt": {
-        "description": "引导模型重新生成合规内容时的提示词模板（{reason} 会被替换为拦截原因）",
+      },
+      "provider_id": {
+        "description": "默认审查提供商",
+        "hint": "默认审查提供商，建议非思考的快速小模型。",
         "type": "string",
-        "default": "你之前的回复未通过内容安全审核，被拦截了。\n拦截原因：{reason}\n\n请重新回复用户的消息，保持有用和完整，但务必确保内容合规、安全，不要包含任何敏感或不适当的内容。"
-    },
-    "block_message": {
-        "description": "所有重试都失败后显示的安全兜底消息",
+        "default": "",
+        "_special": "select_provider"
+      },
+      "input_provider_id": {
+        "description": "输入审查提供商",
+        "hint": "用户输入审查使用的提供商，建议非思考的快速小模型。建议非思考的快速小模型。；留空则回退 llm_audit.provider_id。",
         "type": "string",
-        "default": "抱歉，我无法回答这个问题。请换一个话题吧～"
-    },
-    "input_block_message": {
-        "description": "用户输入不合规时的提示消息（仅在 reply_placeholder_on_block=true 时生效）",
+        "default": "",
+        "_special": "select_provider"
+      },
+      "output_provider_id": {
+        "description": "输出审查提供商",
+        "hint": "模型输出审查使用的提供商，建议非思考的快速小模型；留空则回退 llm_audit.provider_id。",
         "type": "string",
-        "default": "你的消息包含不适当的内容，已被屏蔽。"
-    },
-    "prevention_prompt": {
-        "description": "注入到 system_prompt 的安全约束提示词（{keywords} 会被替换为屏蔽词列表，从源头引导 LLM 不生成敏感内容）",
+        "default": "",
+        "_special": "select_provider"
+      },
+      "prompt": {
+        "description": "审查提示词模板",
+        "hint": "可完全自定义，但必须返回 {\"safe\": bool, \"reason\": str} 格式。{text}=待审查文本，{keywords}=用户配置的关键词列表；",
         "type": "string",
-        "default": "**内容安全约束**你的回复不得包含以下要素：{keywords}。包含此类内容的回复将会被系统拦截。"
-    },
-    "blacklist": {
-        "description": "用户黑名单配置 — 对多次发送违规内容的用户自动限制使用（需开启 check_input）",
-        "type": "object",
-        "items": {
-            "enable": {
-                "description": "是否启用自动拉黑（用户输入多次不通过安全检查后自动封禁）",
-                "type": "bool",
-                "default": false
-            },
-            "duration": {
-                "description": "自动封禁时长（分钟），0 表示永久封禁",
-                "type": "int",
-                "default": 60
-            },
-            "max_violations": {
-                "description": "触发自动拉黑所需的累计违规次数",
-                "type": "int",
-                "default": 3
-            },
-            "message": {
-                "description": "黑名单提示消息（仅在 reply_placeholder_on_block=true 且封禁后的首次拦截时发送）",
-                "type": "string",
-                "default": "你已因多次发送违规内容被临时限制使用，请稍后再试。"
-            }
-        }
+        "default": "请判断以下文本是否包含以下要素：{keywords}\n请严格仅返回如下 JSON 格式，不要包含任何额外文字：\n{\"safe\": true/false, \"reason\": \"简要说明原因\"}\n\n待审查文本：\n{text}"
+      }
     }
+  },
+  "safety_prompt": {
+    "description": "重试提示词模板",
+    "hint": "引导模型重新生成合规内容时使用；可完全自定义，但建议返回模型失败原因。{reason} 会被替换为拦截原因。",
+    "type": "string",
+    "default": "你之前的回复未通过内容安全审核，被拦截了。\n拦截原因：{reason}\n\n请重新回复用户的消息，保持有用和完整，但务必确保内容合规、安全，不要包含任何敏感或不适当的内容。"
+  },
+  "block_message": {
+    "description": "重试失败默认消息",
+    "hint": "所有重试都失败后显示的安全兜底消息。",
+    "type": "string",
+    "default": "抱歉，我无法回答这个问题。请换一个话题吧～"
+  },
+  "input_block_message": {
+    "description": "输入拦截提示",
+    "hint": "用户输入不合规时的提示消息；仅在 reply_placeholder_on_block=true 时生效。",
+    "type": "string",
+    "default": "你的消息包含不适当的内容，已被屏蔽。"
+  },
+  "prevention_prompt": {
+    "description": "安全提示词",
+    "hint": "被注入到主模型 system_prompt 的安全约束提示词，防止主模型不知道限制边界在生成时就尝试输出有害内容，你可以自由自定义这里的提问词或者干脆删掉；{keywords} 会被替换为屏蔽词列表，",
+    "type": "string",
+    "default": "**内容安全约束**你的回复不得包含以下要素：{keywords}。包含此类内容的回复将会被系统拦截。"
+  },
+  "blacklist": {
+    "description": "用户黑名单",
+    "hint": "对多次发送违规内容的用户自动限制使用；需开启 check_input。",
+    "type": "object",
+    "items": {
+      "enable": {
+        "description": "启用自动拉黑",
+        "hint": "用户输入多次不通过安全检查后自动封禁。",
+        "type": "bool",
+        "default": false
+      },
+      "duration": {
+        "description": "封禁时长（分钟）",
+        "hint": "0 表示永久封禁。",
+        "type": "int",
+        "default": 60
+      },
+      "max_violations": {
+        "description": "触发违规次数",
+        "hint": "达到该累计违规次数后触发自动拉黑。",
+        "type": "int",
+        "default": 3
+      },
+      "message": {
+        "description": "黑名单提示消息",
+        "hint": "仅在 reply_placeholder_on_block=true 且封禁后的首次拦截时发送。",
+        "type": "string",
+        "default": "你已因多次发送违规内容被临时限制使用，请稍后再试。"
+      }
+    }
+  }
 }

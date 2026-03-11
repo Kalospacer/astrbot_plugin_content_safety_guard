@@ -56,7 +56,28 @@ class ContentSafetyGuardPlugin(Star):
         # ─── 关键词配置 ───
         keywords_cfg = self.config.get("keywords", {})
         self.keywords_enabled: bool = keywords_cfg.get("enable", True)
-        self.keywords_list: list[str] = keywords_cfg.get("extra_keywords", [])
+        self.keywords_plain_list: list[str] = self._prepare_string_list(
+            keywords_cfg.get("plain_keywords", [])
+        )
+        self.keywords_regex_list: list[str] = self._prepare_string_list(
+            keywords_cfg.get("regex_rules", [])
+        )
+        self._compiled_keyword_patterns: list[tuple[str, re.Pattern[str]]] = []
+
+        for pattern_text in self.keywords_regex_list:
+            try:
+                self._compiled_keyword_patterns.append(
+                    (pattern_text, re.compile(pattern_text))
+                )
+            except re.error as e:
+                logger.warning(
+                    "[ContentSafetyGuard] 已忽略非法 regex_rules 规则: "
+                    f"{pattern_text} | 错误: {e}"
+                )
+
+        self.keywords_list: list[str] = self.keywords_plain_list + [
+            pattern_text for pattern_text, _ in self._compiled_keyword_patterns
+        ]
 
         # ─── LLM 自审查配置 ───
         llm_audit_cfg = self.config.get("llm_audit", {})
@@ -184,22 +205,99 @@ class ContentSafetyGuardPlugin(Star):
             return s
         return f"{s[:limit]}..."
 
+    @staticmethod
+    def _prepare_string_list(values: object) -> list[str]:
+        """清洗字符串列表配置，忽略非字符串与空白项。"""
+        if not isinstance(values, list):
+            return []
+        result: list[str] = []
+        for value in values:
+            if not isinstance(value, str):
+                continue
+            item = value.strip()
+            if item:
+                result.append(item)
+        return result
+
+    @staticmethod
+    def _extract_json_object(text: str) -> dict | None:
+        """从 LLM 返回文本中提取首个完整 JSON 对象。"""
+        if not text:
+            return None
+
+        stripped = text.strip()
+        try:
+            data = json.loads(stripped)
+            if isinstance(data, dict):
+                return data
+        except (json.JSONDecodeError, TypeError, ValueError):
+            pass
+
+        start = stripped.find("{")
+        if start < 0:
+            return None
+
+        depth = 0
+        in_string = False
+        escape = False
+        for index in range(start, len(stripped)):
+            char = stripped[index]
+            if escape:
+                escape = False
+                continue
+            if char == "\\" and in_string:
+                escape = True
+                continue
+            if char == '"':
+                in_string = not in_string
+                continue
+            if in_string:
+                continue
+            if char == "{":
+                depth += 1
+                continue
+            if char != "}":
+                continue
+            depth -= 1
+            if depth != 0:
+                continue
+            candidate = stripped[start : index + 1]
+            try:
+                data = json.loads(candidate)
+            except (json.JSONDecodeError, TypeError, ValueError):
+                return None
+            return data if isinstance(data, dict) else None
+        return None
+
+    @staticmethod
+    def _coerce_json_bool(value: object, default: bool = True) -> bool:
+        """将 LLM 返回的布尔值兼容解析为 bool。"""
+        if value is None:
+            return default
+        if isinstance(value, bool):
+            return value
+        normalized = str(value).strip().lower()
+        if not normalized:
+            return default
+        return normalized not in ("false", "0", "no")
+
     # ══════════════════════════════════════════════════════════════
     # 内容安全检查
     # ══════════════════════════════════════════════════════════════
 
     def _check_keywords(self, text: str, normalized: str) -> tuple[bool, str]:
-        """关键词 / 正则检查（对归一化后的文本进行匹配）"""
+        """关键词检查：显式区分纯文本与正则规则。"""
         if not self.keywords_enabled or not self.keywords_list:
             return True, ""
 
-        for keyword in self.keywords_list:
-            try:
-                if re.search(keyword, normalized) or re.search(keyword, text):
-                    return False, f"匹配到敏感词规则: {keyword}"
-            except re.error:
-                if keyword.lower() in normalized:
-                    return False, f"匹配到敏感词: {keyword}"
+        for keyword in self.keywords_plain_list:
+            if keyword.lower() in normalized:
+                return False, f"匹配到敏感词: {keyword}"
+
+        for pattern_text, pattern in self._compiled_keyword_patterns:
+            if pattern.search(normalized) or pattern.search(text):
+                return False, f"匹配到敏感词规则: {pattern_text}"
+
         return True, ""
 
     async def _check_llm_audit(
@@ -257,29 +355,16 @@ class ContentSafetyGuardPlugin(Star):
         if not text:
             return True, ""
 
-        # 提取 JSON
-        match = re.search(r"\{.*?\}", text, re.S)
-        if match:
-            try:
-                data = json.loads(match.group(0))
-                is_safe = data.get("safe", True)
-                reason = str(data.get("reason", ""))
-                if isinstance(is_safe, bool):
-                    if not is_safe:
-                        return (
-                            False,
-                            f"LLM审查不通过: {reason}" if reason else "LLM审查不通过",
-                        )
-                    return True, ""
-                # 非 bool 类型，尝试解析
-                if str(is_safe).lower() in ("false", "0", "no"):
-                    return (
-                        False,
-                        f"LLM审查不通过: {reason}" if reason else "LLM审查不通过",
-                    )
-                return True, ""
-            except (json.JSONDecodeError, ValueError):
-                pass
+        data = ContentSafetyGuardPlugin._extract_json_object(text)
+        if data is not None:
+            is_safe = ContentSafetyGuardPlugin._coerce_json_bool(data.get("safe", True))
+            reason = str(data.get("reason", ""))
+            if not is_safe:
+                return (
+                    False,
+                    f"LLM审查不通过: {reason}" if reason else "LLM审查不通过",
+                )
+            return True, ""
 
         # JSON 解析失败，简单启发式判断
         lowered = text.lower()
@@ -407,35 +492,30 @@ class ContentSafetyGuardPlugin(Star):
         if not text:
             return "pass", ""
 
-        match = re.search(r"\{.*?\}", text, re.S)
-        if match:
-            try:
-                data = json.loads(match.group(0))
-                user_safe = data.get("user_safe", True)
-                ai_safe = data.get("ai_safe", True)
-                reason = str(data.get("reason", ""))
-                # 归一化为 bool
-                if not isinstance(user_safe, bool):
-                    user_safe = str(user_safe).lower() not in ("false", "0", "no")
-                if not isinstance(ai_safe, bool):
-                    ai_safe = str(ai_safe).lower() not in ("false", "0", "no")
-                if not user_safe:
-                    return (
-                        "user",
-                        f"LLM审查不通过(用户输入): {reason}"
-                        if reason
-                        else "LLM审查不通过(用户输入)",
-                    )
-                if not ai_safe:
-                    return (
-                        "ai",
-                        f"LLM审查不通过(AI回复): {reason}"
-                        if reason
-                        else "LLM审查不通过(AI回复)",
-                    )
-                return "pass", ""
-            except (json.JSONDecodeError, ValueError):
-                pass
+        data = ContentSafetyGuardPlugin._extract_json_object(text)
+        if data is not None:
+            user_safe = ContentSafetyGuardPlugin._coerce_json_bool(
+                data.get("user_safe", True)
+            )
+            ai_safe = ContentSafetyGuardPlugin._coerce_json_bool(
+                data.get("ai_safe", True)
+            )
+            reason = str(data.get("reason", ""))
+            if not user_safe:
+                return (
+                    "user",
+                    f"LLM审查不通过(用户输入): {reason}"
+                    if reason
+                    else "LLM审查不通过(用户输入)",
+                )
+            if not ai_safe:
+                return (
+                    "ai",
+                    f"LLM审查不通过(AI回复): {reason}"
+                    if reason
+                    else "LLM审查不通过(AI回复)",
+                )
+            return "pass", ""
 
         # 解析失败，启发式归因到 AI
         lowered = text.lower()
