@@ -3,5 +3,5 @@ display_name: "阿瓦隆 Avalon"
 desc: "内容安全守卫 - 拦截用户提示词攻击和模型输出偏离人设问题，支持前置/后置审核、关键词匹配、LLM 自审查、黑名单等功能"
 author: Kalospacer
 repo: "https://github.com/Kalospacer/astrbot_plugin_content_safety_guard"
-version: 1.2.5
+version: 1.2.6
 astrbot_version: ">=4.18.0"

@@ -455,6 +455,7 @@ class ContentSafetyGuardPlugin(Star):
                 response.completion_text = self.input_block_message
             else:
                 event.set_result(self.input_block_message)
+                event.stop_event()
             return
         event.stop_event()
 

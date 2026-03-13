@@ -100,7 +100,9 @@
         "description": "审查模式",
         "hint": "separate=输入和输出分开审查；combined_post=跳过输入阶段的 LLM 审查，在输出阶段一次性同时审查用户输入和模型回复。若 check_input=false，则联审即使命中用户输入风险也不会按用户分支拦截。",
         "type": "string",
-        "default": "separate"
+        "default": "separate",
+        "options": ["separate", "combined_post"],
+        "labels": ["分离审查", "后置联审"]
       },
       "provider_id": {
         "description": "默认审查提供商",
