@@ -15,7 +15,7 @@ PLUGIN_NAME = "astrbot_plugin_content_safety_guard"
 PLUGIN_DISPLAY_NAME = "阿瓦隆 Avalon"
 PLUGIN_AUTHOR = "Kalospacer"
 PLUGIN_REPO = "https://github.com/Kalospacer/astrbot_plugin_content_safety_guard"
-PLUGIN_VERSION = "1.2.5"
+PLUGIN_VERSION = "1.2.6"
 PLUGIN_DESC = (
     "内容安全守卫 - 拦截用户提示词攻击和模型输出偏离人设问题，"
     "支持前置/后置审核、关键词匹配、LLM 自审查、黑名单等功能"
