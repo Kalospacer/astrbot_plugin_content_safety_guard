@@ -53,6 +53,9 @@ class ContentSafetyGuardPlugin(Star):
         # ─── 基本配置 ───
         self.max_retries: int = self.config.get("max_retries", 2)
         self.check_input: bool = self.config.get("check_input", False)
+        self.check_input_original_only: bool = self.config.get(
+            "check_input_original_only", False
+        )
         self.check_output: bool = self.config.get("check_output", True)
         self.block_duplicate_reply: bool = self.config.get(
             "block_duplicate_reply", True
@@ -245,6 +248,25 @@ class ContentSafetyGuardPlugin(Star):
         if len(s) <= limit:
             return s
         return f"{s[:limit]}..."
+
+    def _get_user_input_text(
+        self, event: AstrMessageEvent, request: ProviderRequest | None = None
+    ) -> str:
+        """获取用户输入审查文本。
+
+        默认优先读取已被上游插件扩写后的 ``request.prompt``，以兼容现有行为。
+        启用 ``check_input_original_only`` 后，改为只检查原始用户输入文本，
+        避免把 RAG / 记忆注入内容一并当作用户输入审查。
+        """
+        original_text = event.get_message_str() or ""
+        if self.check_input_original_only:
+            return original_text
+
+        if request is not None:
+            prompt = getattr(request, "prompt", "")
+            if isinstance(prompt, str) and prompt.strip():
+                return prompt
+        return original_text
 
     @staticmethod
     def _prepare_string_list(values: object) -> list[str]:
@@ -1013,7 +1035,7 @@ class ContentSafetyGuardPlugin(Star):
             return
 
         event.set_extra("_csg_system_prompt", request.system_prompt or "")
-        event.set_extra("_csg_user_text", request.prompt or event.get_message_str())
+        event.set_extra("_csg_user_text", self._get_user_input_text(event, request))
         user_text = event.get_extra("_csg_user_text", "")
 
         # ─── 用户输入前置检查（在 LLM 生成前执行）───

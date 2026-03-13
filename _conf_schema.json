@@ -11,6 +11,12 @@
     "type": "bool",
     "default": true
   },
+  "check_input_original_only": {
+    "description": "仅检查原始输入",
+    "hint": "开启后，用户输入审查只检查原始用户消息文本，不检查已被记忆/RAG等插件扩写后的 request.prompt，可避免因注入内容命中关键词而误判。",
+    "type": "bool",
+    "default": false
+  },
   "check_output": {
     "description": "检查模型输出",
     "hint": "是否在模型回复后执行输出审查；命中后会按 max_retries 引导重新生成。",

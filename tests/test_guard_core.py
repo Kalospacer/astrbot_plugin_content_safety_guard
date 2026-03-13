@@ -204,7 +204,7 @@ def test_register_metadata_and_docs_are_unified():
 
     assert module.PLUGIN_DISPLAY_NAME == "阿瓦隆 Avalon"
     assert module.PLUGIN_AUTHOR == "Kalospacer"
-    assert module.PLUGIN_VERSION == "1.2.5"
+    assert module.PLUGIN_VERSION == "1.2.6"
     assert "LLM 自审查" in module.PLUGIN_DESC
     assert AUDIT_SYSTEM_PROMPT == "你是内容安全审查员。只返回 JSON，不要附加任何解释。"
     assert f'display_name: "{module.PLUGIN_DISPLAY_NAME}"' in metadata_text
@@ -286,6 +286,48 @@ def test_combined_post_skips_input_stage_llm_audit():
     run(plugin.on_llm_request_hook(event, request))
 
     assert plugin.context.llm_calls == []
+
+
+def test_original_input_only_ignores_prompt_injection_for_input_check():
+    plugin = build_plugin(
+        {
+            "check_input": True,
+            "check_input_original_only": True,
+            "keywords": {
+                "enable": True,
+                "plain_keywords": ["喵"],
+            },
+        }
+    )
+    event = DummyEvent(sender_id="10003")
+    event.message = "居"
+    request = DummyRequest(prompt="<RAG-Faiss-Memory>喵</RAG-Faiss-Memory>\n居")
+
+    run(plugin.on_llm_request_hook(event, request))
+
+    assert event.stopped is False
+    assert event.result is None
+    assert event.get_extra("_csg_user_text") == "居"
+
+
+def test_default_input_check_still_uses_request_prompt():
+    plugin = build_plugin(
+        {
+            "check_input": True,
+            "keywords": {
+                "enable": True,
+                "plain_keywords": ["喵"],
+            },
+        }
+    )
+    event = DummyEvent(sender_id="10003")
+    event.message = "居"
+    request = DummyRequest(prompt="<RAG-Faiss-Memory>喵</RAG-Faiss-Memory>\n居")
+
+    run(plugin.on_llm_request_hook(event, request))
+
+    assert event.stopped is True
+    assert event.result == plugin.input_block_message
 
 
 def test_combined_post_does_not_block_user_branch_when_check_input_disabled():
