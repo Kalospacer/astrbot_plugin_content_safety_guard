@@ -327,7 +327,7 @@ def test_default_input_check_still_uses_request_prompt():
     run(plugin.on_llm_request_hook(event, request))
 
     assert event.stopped is True
-    assert event.result == plugin.input_block_message
+    assert event.result == "你的消息未通过内容安全检查，已被拦截。\n原因：匹配到敏感词: 喵"
 
 
 def test_combined_post_does_not_block_user_branch_when_check_input_disabled():
@@ -421,6 +421,32 @@ def test_combined_audit_uses_configurable_prompt_template():
 
     assert plugin.context.llm_calls
     assert plugin.context.llm_calls[0]["prompt"] == "KW=无指定|U=user text|A=ai text"
+
+
+def test_input_block_message_supports_reason_placeholder_for_response_phase():
+    plugin = build_plugin(
+        {
+            "input_block_message": "已拦截\n```content\n{reason}\n```",
+        }
+    )
+    event = DummyEvent(sender_id="10005")
+    response = SimpleNamespace(completion_text="normal reply", is_chunk=False)
+
+    plugin._apply_user_input_block(event, "10005", "LLM审查不通过(用户输入): user risk", response)
+
+    assert response.completion_text == "已拦截\n```content\nLLM审查不通过(用户输入): user risk\n```"
+
+
+def test_block_message_supports_reason_placeholder_after_retry_exhausted():
+    plugin = build_plugin(
+        {
+            "block_message": "已阻止输出\n```content\n{reason}\n```",
+        }
+    )
+
+    rendered = plugin._render_block_message("已阻止输出\n```content\n{reason}\n```", "匹配到敏感词: 喵")
+
+    assert rendered == "已阻止输出\n```content\n匹配到敏感词: 喵\n```"
 
 
 def run_all_tests() -> None:
