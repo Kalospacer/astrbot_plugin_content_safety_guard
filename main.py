@@ -149,10 +149,10 @@ class ContentSafetyGuardPlugin(Star):
             ),
         )
         self.block_message: str = self.config.get(
-            "block_message", "抱歉，我无法回答这个问题。请换一个话题吧～"
+            "block_message", "抱歉，我无法回答这个问题。请换一个话题吧～\n原因：{reason}"
         )
         self.input_block_message: str = self.config.get(
-            "input_block_message", "你的消息包含不适当的内容，已被屏蔽。"
+            "input_block_message", "你的消息未通过内容安全检查，已被拦截。\n原因：{reason}"
         )
         self.prevention_prompt: str = self.config.get(
             "prevention_prompt",
@@ -248,6 +248,11 @@ class ContentSafetyGuardPlugin(Star):
         if len(s) <= limit:
             return s
         return f"{s[:limit]}..."
+
+    def _render_block_message(self, template: str, reason: str) -> str:
+        """渲染对用户可见的拦截提示，支持 {reason} 占位符。"""
+        safe_reason = self._clip_log_text(reason, limit=500) or "未提供具体原因"
+        return self._render_template(template, {"reason": safe_reason})
 
     def _get_user_input_text(
         self, event: AstrMessageEvent, request: ProviderRequest | None = None
@@ -473,10 +478,11 @@ class ContentSafetyGuardPlugin(Star):
         logger.info(f"[ContentSafetyGuard] 用户输入未通过安全检查: {reason}")
         self._add_violation(sender_id, reason)
         if self.reply_placeholder_on_block:
+            block_message = self._render_block_message(self.input_block_message, reason)
             if response is not None:
-                response.completion_text = self.input_block_message
+                response.completion_text = block_message
             else:
-                event.set_result(self.input_block_message)
+                event.set_result(block_message)
                 event.stop_event()
             return
         event.stop_event()
@@ -1139,7 +1145,9 @@ class ContentSafetyGuardPlugin(Star):
                     "[ContentSafetyGuard] 无法获取当前 Provider，直接替换为安全消息"
                 )
                 if self.reply_placeholder_on_block:
-                    response.completion_text = self.block_message
+                    response.completion_text = self._render_block_message(
+                        self.block_message, ai_fail_reason or "无法获取当前 Provider"
+                    )
                 else:
                     event.stop_event()
                 return
@@ -1147,7 +1155,9 @@ class ContentSafetyGuardPlugin(Star):
         except Exception as e:
             logger.error(f"[ContentSafetyGuard] 获取 Provider 失败: {e}")
             if self.reply_placeholder_on_block:
-                response.completion_text = self.block_message
+                response.completion_text = self._render_block_message(
+                    self.block_message, ai_fail_reason or f"获取 Provider 失败: {e}"
+                )
             else:
                 event.stop_event()
             return
@@ -1232,6 +1242,8 @@ class ContentSafetyGuardPlugin(Star):
             f"[ContentSafetyGuard] {self.max_retries} 次重试均失败，使用安全默认消息"
         )
         if self.reply_placeholder_on_block:
-            response.completion_text = self.block_message
+            response.completion_text = self._render_block_message(
+                self.block_message, reason
+            )
         else:
             event.stop_event()
