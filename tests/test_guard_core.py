@@ -288,6 +288,43 @@ def test_combined_post_skips_input_stage_llm_audit():
     assert plugin.context.llm_calls == []
 
 
+def test_default_request_hook_injects_prevention_prompt():
+    plugin = build_plugin(
+        {
+            "keywords": {
+                "enable": True,
+                "plain_keywords": ["risk"],
+            },
+            "prevention_prompt": "BLOCK {keywords}",
+        }
+    )
+    event = DummyEvent(sender_id="10003")
+    request = DummyRequest(system_prompt="BASE")
+
+    run(plugin.on_llm_request_hook(event, request))
+
+    assert request.system_prompt == "BASE\n\nBLOCK risk"
+
+
+def test_disabled_request_hook_skips_prevention_prompt_injection():
+    plugin = build_plugin(
+        {
+            "inject_prevention_prompt": False,
+            "keywords": {
+                "enable": True,
+                "plain_keywords": ["risk"],
+            },
+            "prevention_prompt": "BLOCK {keywords}",
+        }
+    )
+    event = DummyEvent(sender_id="10003")
+    request = DummyRequest(system_prompt="BASE")
+
+    run(plugin.on_llm_request_hook(event, request))
+
+    assert request.system_prompt == "BASE"
+
+
 def test_original_input_only_ignores_prompt_injection_for_input_check():
     plugin = build_plugin(
         {

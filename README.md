@@ -203,6 +203,7 @@
 | 配置项                |                默认值 | 说明                                                 |
 | --------------------- | --------------------: | ---------------------------------------------------- |
 | `safety_prompt`       |              内置模板 | 输出重生提示词（含 `{reason}`）                      |
+| `inject_prevention_prompt` |                `true` | 是否将 `prevention_prompt` 注入主对话模型的 system_prompt |
 | `prevention_prompt`   |              内置模板 | 注入 system_prompt 的预防提示（含 `{keywords}`）     |
 | `block_message`       | `抱歉，我无法回答...` | 输出重试失败后的兜底消息                             |
 | `input_block_message` |     `你的消息包含...` | 输入拦截提示（仅 `reply_placeholder_on_block=true`） |
