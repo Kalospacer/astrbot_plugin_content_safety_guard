@@ -67,6 +67,9 @@ class ContentSafetyGuardPlugin(Star):
         self.block_non_admin_slash_in_group: bool = self.config.get(
             "block_non_admin_slash_in_group", True
         )
+        self.inject_prevention_prompt: bool = self.config.get(
+            "inject_prevention_prompt", True
+        )
 
         # ─── 关键词配置 ───
         keywords_cfg = self.config.get("keywords", {})
@@ -1051,7 +1054,7 @@ class ContentSafetyGuardPlugin(Star):
                 return
 
         # 注入屏蔽词约束到 system_prompt，从源头引导 LLM 规避敏感内容
-        if self.keywords_list:
+        if self.inject_prevention_prompt and self.keywords_list:
             prevention = self._render_template(
                 self.prevention_prompt,
                 {"keywords": "、".join(self.keywords_list)},

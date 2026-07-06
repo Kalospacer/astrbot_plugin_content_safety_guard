@@ -47,6 +47,12 @@
     "type": "bool",
     "default": false
   },
+  "inject_prevention_prompt": {
+    "description": "注入安全提示词到 system prompt",
+    "hint": "开启后会把 prevention_prompt 拼接到主对话模型的 system_prompt 中作为预防性约束；关闭后仍保留输入/输出审查与违规重试，但不会预先改写 system prompt。",
+    "type": "bool",
+    "default": true
+  },
   "keywords": {
     "description": "关键词审核",
     "hint": "关键词配置，注意这里配置的文本关键词会同时用于 LLM 审查，因此不必限制在单个词语，也可以是一句话或要求；会在 LLM 审核前先进行快速文本匹配，用于低成本拦截明显违规内容。",
